@@ -44,11 +44,11 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.2'
+export const VERSION = '1.2.4'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -776,79 +776,111 @@ function Brand({ label }) {
 // Marquee
 // ---------------------------------------------------------------------------
 
-const MARQUEE_CSS = `
-@keyframes nfltkr-scroll { from { transform: translate3d(0,0,0); } to { transform: translate3d(-50%,0,0); } }
-@media (prefers-reduced-motion: reduce) { .nfltkr-track { animation: none !important; } }
-`
+/** Distance advanced in `dt` seconds, wrapped at one row's width. */
+export function nextOffset(offset, rowWidth, speed, dt) {
+  if (!(rowWidth > 0) || !(speed > 0)) {
+    return 0
+  }
 
-function useStyles() {
-  useEffect(() => {
-    const tag = document.createElement('style')
-    tag.dataset.plugin = ID
-    tag.textContent = MARQUEE_CSS
-    document.head.appendChild(tag)
+  const step = Math.min(0.05, Math.max(0, dt)) * speed
 
-    return () => tag.remove()
-  }, [])
+  return (offset + step) % rowWidth
 }
 
-function Marquee({ speed, paused, signature, children }) {
+/** One frame of the ticker. Pure but for the two DOM writes it makes (the
+ *  track transform and the duplicate copy's visibility), so the loop can be
+ *  exercised without a browser.
+ *
+ *  Hover is read from the DOM (`:hover`) rather than tracked with enter/leave
+ *  events: a drag that ends over the strip can swallow the `mouseleave` and
+ *  strand the ticker paused. */
+export function stepMarquee(state) {
+  const { wrap, row, copy, track } = state
+
+  if (!wrap || !row || !track) {
+    return state
+  }
+
+  const rowWidth = row.scrollWidth
+  const wide = rowWidth > wrap.clientWidth + 2
+  const hovering = typeof wrap.matches === 'function' && wrap.matches(':hover')
+  let offset = state.offset
+
+  if (copy && state.wide !== wide) {
+    copy.style.visibility = wide ? 'visible' : 'hidden'
+  }
+
+  if (!wide || state.reduced) {
+    offset = 0
+    track.style.transform = 'translate3d(0,0,0)'
+  } else if (!hovering) {
+    offset = nextOffset(offset, rowWidth, state.speed, state.dt)
+    track.style.transform = `translate3d(${-offset.toFixed(2)}px,0,0)`
+  }
+
+  return { ...state, offset, wide, dt: 0 }
+}
+
+/** The scrolling row.
+ *
+ *  Driven by requestAnimationFrame, not a CSS keyframe animation. The duration
+ *  has to be derived from the row's measured width, and a keyframe injected at
+ *  mount simply never starts when the pane has no width yet — which is exactly
+ *  what a freshly-adopted layout zone looks like. Reading the width every frame
+ *  also means a live poll that rewrites the row can't leave the scroll pinned to
+ *  a stale duration.
+ *
+ *  `prefers-reduced-motion` holds it still at offset 0. */
+function Marquee({ speed, paused, children }) {
   const wrapRef = useRef(null)
   const rowRef = useRef(null)
-  const [duration, setDuration] = useState(0)
-  const [scrolls, setScrolls] = useState(false)
+  const copyRef = useRef(null)
+  const trackRef = useRef(null)
+  const offsetRef = useRef(0)
 
-  useLayoutEffect(() => {
-    const wrap = wrapRef.current
-    const row = rowRef.current
-
-    if (!wrap || !row) {
+  useEffect(() => {
+    if (paused) {
       return undefined
     }
 
-    const measure = () => {
-      const rowWidth = row.scrollWidth
-      const viewWidth = wrap.clientWidth
-      const needs = rowWidth > viewWidth + 2
-      const next = needs ? Math.max(8, rowWidth / Math.max(12, speed)) : 0
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches === true
+    let frame = 0
+    let last = 0
+    let state = { wrap: null, row: null, copy: null, track: null, offset: offsetRef.current, speed, dt: 0, wide: null, reduced }
 
-      setScrolls(needs)
-      // A live poll rewrites the row every 20s; keeping a near-identical
-      // duration avoids restarting the animation mid-scroll for no reason.
-      setDuration(previous => (Math.abs(previous - next) < 1 ? previous : next))
+    const step = now => {
+      state.wrap = wrapRef.current
+      state.row = rowRef.current
+      state.copy = copyRef.current
+      state.track = trackRef.current
+      state.speed = speed
+      state.dt = last ? (now - last) / 1000 : 0
+      state = stepMarquee(state)
+      offsetRef.current = state.offset
+      last = now
+      frame = requestAnimationFrame(step)
     }
 
-    measure()
+    frame = requestAnimationFrame(step)
 
-    const observer = new ResizeObserver(measure)
-    observer.observe(wrap)
-    observer.observe(row)
+    return () => cancelAnimationFrame(frame)
+  }, [paused, speed])
 
-    return () => observer.disconnect()
-  }, [speed, signature])
-
-  const trackStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    width: 'max-content',
-    height: '100%',
-    willChange: scrolls ? 'transform' : undefined,
-    animation: scrolls && duration ? `nfltkr-scroll ${duration.toFixed(2)}s linear infinite` : 'none',
-    animationPlayState: paused ? 'paused' : 'running'
-  }
-
-  const row = key =>
+  const row = (key, ref, duplicate) =>
     jsx(
       'div',
       {
-        ref: key === 'a' ? rowRef : undefined,
-        'aria-hidden': key === 'b' ? true : undefined,
+        ref,
+        'aria-hidden': duplicate ? true : undefined,
         style: {
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           paddingRight: 18,
-          visibility: key === 'b' && !scrolls ? 'hidden' : 'visible'
+          visibility: duplicate ? 'hidden' : 'visible'
         },
         children
       },
@@ -865,7 +897,11 @@ function Marquee({ speed, paused, signature, children }) {
       maskImage: 'linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 18px), transparent 100%)',
       WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 18px), transparent 100%)'
     },
-    children: jsx('div', { className: 'nfltkr-track', style: trackStyle, children: [row('a'), row('b')] })
+    children: jsx('div', {
+      ref: trackRef,
+      style: { display: 'flex', alignItems: 'center', width: 'max-content', height: '100%', willChange: 'transform' },
+      children: [row('a', rowRef, false), row('b', copyRef, true)]
+    })
   })
 }
 
@@ -1113,16 +1149,13 @@ function SettingsPanel({ slates, settings }) {
  *  marquee keeps the top row; everything below it is a scrolling list, so a
  *  collapsed 30px strip and a 400px zone both look deliberate. */
 function ScoreTickerPane() {
-  useStyles()
-
   useEffect(() => {
     $paneMounted.set(true)
 
     return () => $paneMounted.set(false)
   }, [])
 
-  const { settings, shown, focusKey, loading, errored, signature } = useTickerModel()
-  const [hover, setHover] = useState(false)
+  const { settings, shown, focusKey, loading, errored } = useTickerModel()
   const openBoard = () => host.navigate('/nfl')
 
   const strip = []
@@ -1173,8 +1206,6 @@ function ScoreTickerPane() {
     children: [
       jsxs('div', {
         key: 'strip',
-        onMouseEnter: () => setHover(true),
-        onMouseLeave: () => setHover(false),
         style: {
           display: 'flex',
           alignItems: 'center',
@@ -1190,8 +1221,7 @@ function ScoreTickerPane() {
           jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            signature,
-            paused: hover || !settings.scroll,
+            paused: !settings.scroll,
             children: strip
           })
         ]
@@ -1303,11 +1333,6 @@ function useTickerModel() {
     .map(slate => ({ league: slate.league.key, games: visibleGames(slate, settings) }))
     .filter(entry => entry.games.length > 0)
 
-  const signature =
-    shown
-      .map(entry => `${entry.league}:${entry.games.map(g => `${g.id}:${g.away.score}-${g.home.score}:${g.clock}:${g.state}`).join(',')}`)
-      .join('|') || `${loading}|${errored}`
-
   return {
     settings,
     slates,
@@ -1315,7 +1340,6 @@ function useTickerModel() {
     focusKey,
     loading,
     errored,
-    signature,
     update,
     updateReady: Boolean(update.data && isNewer(update.data.version, VERSION))
   }
@@ -1334,10 +1358,7 @@ function StatusTicker() {
 }
 
 function TickerBar() {
-  useStyles()
-
-  const { settings, slates, shown, focusKey, loading, errored, signature, updateReady, update } = useTickerModel()
-  const [hover, setHover] = useState(false)
+  const { settings, slates, shown, focusKey, loading, errored, updateReady, update } = useTickerModel()
   const [pinned, setPinned] = useState(false)
   const [open, setOpen] = useState(false)
 
@@ -1398,8 +1419,6 @@ function TickerBar() {
   }
 
   const bar = jsxs('div', {
-    onMouseEnter: () => setHover(true),
-    onMouseLeave: () => setHover(false),
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -1417,8 +1436,7 @@ function TickerBar() {
         ? jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            signature,
-            paused: hover || pinned || !settings.scroll,
+            paused: pinned || !settings.scroll,
             children: content
           })
         : null,

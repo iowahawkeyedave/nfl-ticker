@@ -38,7 +38,8 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
 - **Pick your sports** — NFL / CFB / NBA / NHL / MLB toggle on and off; out-of-season
   leagues are simply quiet.
 - **Follow one team** across leagues (`NFL · CHI Bears`, `MLB · CHC Cubs`, …).
-- **Hover to pause**, a pause button to pin it, and a speed control.
+- **Scrolls continuously**, freezes while you hover it, a pause button pins it, and a speed
+  control (px/sec). Honours `prefers-reduced-motion` by holding still.
 - **Click any game** for the board.
 - **`/nfl` scoreboard page** — grouped by league with an `ALL / NFL / CFB / NBA / NHL / MLB`
   filter, logo cards with records, status, down & distance / possession, last play, venue
@@ -132,6 +133,9 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.4** — the marquee is driven by `requestAnimationFrame` instead of a CSS
+  keyframe animation (a keyframe injected before the pane had a width never started),
+  and hover-pause reads `:hover` from the DOM so a stray `mouseleave` can't strand it.
 - **1.2.2** — update checks go through the GitHub contents API first (raw is CDN-cached
   and can lag a release by minutes), so a new version is visible immediately.
 - **1.2.1** — the ticker appears in one place: the status-bar copy yields while the layout
