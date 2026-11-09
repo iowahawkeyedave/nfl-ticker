@@ -11,6 +11,9 @@
  * half-innings, OT/SO), and the ticker auto-focuses the league that matters —
  * your team's game first, then the live leagues on a slow rotation.
  *
+ *
+ * 1.2 adds a LAYOUT PANE: the same ticker as a draggable zone in the layout
+ * editor (`panes` area) — collapsed to a 30px strip that grows into a board.
  * Data: ESPN public site API (site.api.espn.com), no key, no account.
  *
  * What it adds beyond the scroll:
@@ -45,7 +48,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.1.0'
+export const VERSION = '1.2.0'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -1064,27 +1067,160 @@ function SettingsPanel({ slates, settings }) {
 }
 
 // ---------------------------------------------------------------------------
+// Layout pane — the same ticker, in a zone you can drag anywhere
+// ---------------------------------------------------------------------------
+
+/** A pane is not a 20px strip: it starts as one and grows into a board. The
+ *  marquee keeps the top row; everything below it is a scrolling list, so a
+ *  collapsed 30px strip and a 400px zone both look deliberate. */
+function ScoreTickerPane() {
+  useStyles()
+
+  const { settings, shown, focusKey, loading, errored, signature } = useTickerModel()
+  const [hover, setHover] = useState(false)
+  const openBoard = () => host.navigate('/nfl')
+
+  const strip = []
+
+  if (!shown.length) {
+    strip.push(
+      jsx(
+        'span',
+        {
+          style: {
+            color: 'var(--ui-text-quaternary)',
+            fontSize: 9.5,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase'
+          },
+          children: loading
+            ? 'Loading slates…'
+            : errored
+              ? 'Scores unavailable'
+              : settings.follow
+                ? `No game for ${settings.follow.replace(':', ' ')}`
+                : 'No games on the slate'
+        },
+        'notice'
+      )
+    )
+  } else {
+    for (const entry of shown) {
+      if (settings.mode === 'all') {
+        strip.push(jsx(LeagueChip, { league: entry.league }, `chip-${entry.league}`))
+      }
+
+      for (const game of entry.games) {
+        strip.push(jsx(Segment, { game, onOpen: openBoard }, game.id))
+        strip.push(jsx(SEP, {}, `sep-${game.id}`))
+      }
+    }
+  }
+
+  return jsxs('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      minHeight: 0,
+      background: 'var(--ui-bg-editor)'
+    },
+    children: [
+      jsxs('div', {
+        key: 'strip',
+        onMouseEnter: () => setHover(true),
+        onMouseLeave: () => setHover(false),
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          flex: '0 0 auto',
+          height: 24,
+          padding: '0 6px',
+          overflow: 'hidden',
+          borderBottom: '1px solid var(--ui-stroke-tertiary)'
+        },
+        children: [
+          jsx(Brand, { key: 'brand', label: settings.mode === 'all' ? 'SCORES' : leagueLabel(focusKey) || 'SCORES' }),
+          jsx(Marquee, {
+            key: 'm',
+            speed: settings.speed,
+            signature,
+            paused: hover || !settings.scroll,
+            children: strip
+          })
+        ]
+      }),
+      jsx('div', {
+        key: 'list',
+        style: { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '4px 8px 10px' },
+        children: shown.map(entry =>
+          jsxs(
+            'div',
+            {
+              style: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 6 },
+              children: [
+                jsxs('div', {
+                  style: { display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 2 },
+                  children: [
+                    jsx('span', {
+                      style: {
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: '0.09em',
+                        color: 'var(--ui-text-quaternary)'
+                      },
+                      children: leagueLabel(entry.league)
+                    }),
+                    liveCount(entry.games)
+                      ? jsxs('span', {
+                          style: { display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9.5, color: 'var(--ui-text-quaternary)' },
+                          children: [jsx(Dot, { live: true }), `${liveCount(entry.games)} live`]
+                        })
+                      : null
+                  ]
+                }),
+                ...entry.games.map(game =>
+                  jsx(
+                    'div',
+                    {
+                      style: {
+                        display: 'flex',
+                        alignItems: 'center',
+                        height: 22,
+                        minWidth: 0,
+                        borderBottom: '1px solid var(--ui-stroke-quaternary)'
+                      },
+                      children: jsx(Segment, { game, onOpen: openBoard })
+                    },
+                    game.id
+                  )
+                )
+              ]
+            },
+            entry.league
+          )
+        )
+      })
+    ]
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Status bar contribution
 // ---------------------------------------------------------------------------
 
-function TickerBar() {
-  useStyles()
-
+function useTickerModel() {
   const settings = useValue($settings)
   const slates = useSlates(settings.leagues)
   const update = useUpdateCheck()
-  const updateReady = Boolean(update.data && isNewer(update.data.version, VERSION))
-  const [hover, setHover] = useState(false)
-  const [pinned, setPinned] = useState(false)
-  const [open, setOpen] = useState(false)
   const [tick, setTick] = useState(0)
 
-  const openBoard = () => host.navigate('/nfl')
+  const active = slates.filter(slate => slate.enabled)
+  const loading = active.some(slate => slate.isPending)
+  const errored = active.length > 0 && active.every(slate => slate.isError)
   const withGames = slates.filter(slate => (slate.data?.games?.length || 0) > 0)
   const liveSlates = withGames.filter(slate => slate.data.games.some(game => game.state === 'in'))
-  const live = slates.filter(slate => slate.enabled)
-  const loading = live.some(slate => slate.isPending)
-  const errored = live.length > 0 && live.every(slate => slate.isError)
 
   // Auto mode shows ONE league: the one your team is playing in, else the live
   // leagues on a slow rotation, else whatever is next on the calendar.
@@ -1121,6 +1257,34 @@ function TickerBar() {
   const shown = (settings.mode === 'all' ? withGames : withGames.filter(slate => slate.league.key === focusKey))
     .map(slate => ({ league: slate.league.key, games: visibleGames(slate, settings) }))
     .filter(entry => entry.games.length > 0)
+
+  const signature =
+    shown
+      .map(entry => `${entry.league}:${entry.games.map(g => `${g.id}:${g.away.score}-${g.home.score}:${g.clock}:${g.state}`).join(',')}`)
+      .join('|') || `${loading}|${errored}`
+
+  return {
+    settings,
+    slates,
+    shown,
+    focusKey,
+    loading,
+    errored,
+    signature,
+    update,
+    updateReady: Boolean(update.data && isNewer(update.data.version, VERSION))
+  }
+}
+
+function TickerBar() {
+  useStyles()
+
+  const { settings, slates, shown, focusKey, loading, errored, signature, updateReady, update } = useTickerModel()
+  const [hover, setHover] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  const openBoard = () => host.navigate('/nfl')
 
   const content = []
 
@@ -1196,9 +1360,7 @@ function TickerBar() {
         ? jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            signature: shown
-              .map(entry => `${entry.league}:${entry.games.map(g => `${g.id}:${g.away.score}-${g.home.score}:${g.clock}:${g.state}`).join(',')}`)
-              .join('|') || `${loading}|${errored}`,
+            signature,
             paused: hover || pinned || !settings.scroll,
             children: content
           })
@@ -1737,6 +1899,24 @@ export default {
         area: STATUSBAR_AREAS.left,
         order: 120,
         render: () => jsx(TickerBar, {})
+      },
+      {
+        id: 'pane',
+        area: 'panes',
+        title: 'Scores',
+        // A bottom strip by default, but the dock hint is a ONE-TIME gesture:
+        // no `enforce`, so wherever you drag it is where it stays.
+        // `headerVeto` stands the zone's tab strip down, which is what makes a
+        // 30px ticker read as a ticker instead of a pane with a title bar.
+        data: {
+          placement: 'bottom',
+          height: '30px',
+          maxHeight: '60vh',
+          headerVeto: true,
+          uncloseable: true,
+          dock: { pane: 'workspace', pos: 'bottom' }
+        },
+        render: () => jsx(ScoreTickerPane, {})
       },
       {
         id: 'page',

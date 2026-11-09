@@ -44,6 +44,10 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
   filter, logo cards with records, status, down & distance / possession, last play, venue
   and TV, plus an expandable **Details** panel that pulls ESPN leaders and scoring plays on
   demand. Sidebar nav row + command-palette entries.
+- **Layout pane** — the same ticker as a **draggable zone**: it docks under the workspace
+  as a 30px strip, and from there you drag it anywhere in the layout editor (side rails,
+  stacked with the terminal, its own column). Stretch it and the strip stays on top while
+  the games become a scrolling list with league headers.
 - **Self-updating** — see [Updates](#updates).
 
 ## Install
@@ -79,7 +83,8 @@ the command palette (`Ctrl/Cmd+K`).
 
 | Action | How |
 |--------|-----|
-| Open the scoreboard | Click any game in the ticker |
+| Open the scoreboard | Click any game in the ticker or the pane |
+| Move it anywhere | Drag the **Scores** pane in the layout editor |
 | Ticker settings | Gear at the right end of the ticker |
 | Pause / resume | Hover the ticker, or the pause button next to the gear |
 | Every command | `Ctrl/Cmd+K` → "Scores: …" |
@@ -124,6 +129,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.0** — layout pane: a draggable `panes` zone (30px strip → scrolling board), docked
+  under the workspace once and then wherever you drag it.
 - **1.1.0** — five leagues (NFL, CFB, NBA, NHL, MLB), league-aware status lines, auto-focus
   with live-league rotation, `All` crawl mode, per-sport chips, league-grouped scoreboard
   page with a filter row.

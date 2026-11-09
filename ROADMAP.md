@@ -7,7 +7,9 @@ Renderer-only is a standing constraint: **no Python half, no `config.yaml` chang
 that needs a backend (e.g. a Yahoo-fantasy score in the ticker) is explicitly out of scope
 unless that decision is reopened.
 
-## v1.2 candidates
+## v1.3 candidates
+
+(These were earmarked for 1.2; the layout pane took that slot.)
 
 ### Cheap wins (the "it feels smart now" bundle)
 
