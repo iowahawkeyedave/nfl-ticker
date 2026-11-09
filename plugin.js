@@ -1,11 +1,15 @@
 /**
- * NFL Ticker — a live NFL score ticker in the Hermes status bar.
+ * Score Ticker — live NFL, college football, NBA, NHL and MLB scores in the
+ * Hermes status bar.
  * ------------------------------------------------------------------
- * Port of the idea behind github.com/krypdoh/NFL-TCKR (a Windows AppBar
- * ticker) to Hermes Desktop: instead of reserving a desktop strip, the
- * ticker lives in the app's own bottom status bar and scrolls the whole
- * week's slate — team-coloured tags, scores, game clock, down & distance,
- * possession marker and the last play.
+ * Started as a port of github.com/krypdoh/NFL-TCKR (a Windows AppBar ticker):
+ * instead of reserving a desktop strip, the ticker lives in the app's own
+ * bottom status bar and scrolls the slate — team-coloured tags, scores, game
+ * clock, down & distance, possession marker and the last play.
+ *
+ * 1.1 is league-aware: one status vocabulary per sport (quarters, periods,
+ * half-innings, OT/SO), and the ticker auto-focuses the league that matters —
+ * your team's game first, then the live leagues on a slow rotation.
  *
  * Data: ESPN public site API (site.api.espn.com), no key, no account.
  *
@@ -41,17 +45,39 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.0.0'
+export const VERSION = '1.1.0'
 
 // ---------------------------------------------------------------------------
-// Endpoints + settings
+// Leagues + settings
 // ---------------------------------------------------------------------------
 
-const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
-const summaryUrl = id => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${id}`
-const QUERY_KEY = ['nfl-ticker', 'scoreboard']
+const SCOREBOARD_ROOT = 'https://site.api.espn.com/apis/site/v2/sports'
+const scoreboardUrl = league => `${SCOREBOARD_ROOT}/${league.path}/scoreboard`
+const summaryUrl = (league, id) => `${SCOREBOARD_ROOT}/${league.path}/summary?event=${id}`
+const slateKey = league => ['nfl-ticker', 'slate', league.key]
 
-const DEFAULTS = { follow: '', speed: 70, liveOnly: false, scroll: true }
+/** One ESPN site-API path per league: the payload shape is identical, only the
+ *  status vocabulary differs (quarters, periods, innings, halves), so a league
+ *  is a row here plus a branch in `liveStatus`. */
+const LEAGUES = [
+  { key: 'nfl', label: 'NFL', sport: 'football', path: 'football/nfl', regulation: 4 },
+  { key: 'cfb', label: 'CFB', sport: 'football', path: 'football/college-football', regulation: 4 },
+  { key: 'nba', label: 'NBA', sport: 'basketball', path: 'basketball/nba', regulation: 4 },
+  { key: 'nhl', label: 'NHL', sport: 'hockey', path: 'hockey/nhl', regulation: 3 },
+  { key: 'mlb', label: 'MLB', sport: 'baseball', path: 'baseball/mlb', regulation: 9 }
+]
+
+const LEAGUE_BY_KEY = Object.fromEntries(LEAGUES.map(league => [league.key, league]))
+const leagueLabel = key => LEAGUE_BY_KEY[key]?.label || ''
+
+const DEFAULTS = {
+  follow: '',
+  speed: 70,
+  liveOnly: false,
+  scroll: true,
+  leagues: LEAGUES.map(league => league.key),
+  mode: 'auto'
+}
 
 /** Live store, seeded from plugin storage in register(). */
 const $settings = atom({ ...DEFAULTS })
@@ -109,7 +135,7 @@ function parseCompetitor(c) {
   }
 }
 
-function parseGame(event) {
+function parseGame(event, league) {
   const competition = event.competitions?.[0] || {}
   const status = competition.status || event.status || {}
   const type = status.type || {}
@@ -127,6 +153,8 @@ function parseGame(event) {
 
   return {
     id: String(event.id || competition.id || ''),
+    league: league.key,
+    sport: league.sport,
     date: event.date || competition.date || '',
     state: type.state || 'pre',
     detail: type.detail || '',
@@ -167,8 +195,8 @@ function intervalFor(data) {
   return liveCount(data.games) > 0 ? 20_000 : 120_000
 }
 
-function parseScoreboard(json) {
-  const games = (json.events || []).map(parseGame)
+function parseScoreboard(json, league) {
+  const games = (json.events || []).map(event => parseGame(event, league))
   const rank = { in: 0, pre: 1, post: 2 }
 
   games.sort((a, b) => {
@@ -184,6 +212,7 @@ function parseScoreboard(json) {
   })
 
   return {
+    league: league.key,
     games,
     week: json.week?.label || '',
     season: json.season?.year ? String(json.season.year) : '',
@@ -191,10 +220,11 @@ function parseScoreboard(json) {
   }
 }
 
-function useScoreboard() {
+function useSlate(league, enabled) {
   return useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => getJSON(SCOREBOARD_URL, signal).then(parseScoreboard),
+    queryKey: slateKey(league),
+    queryFn: ({ signal }) => getJSON(scoreboardUrl(league), signal).then(json => parseScoreboard(json, league)),
+    enabled,
     refetchInterval: query => intervalFor(query.state.data),
     refetchIntervalInBackground: false,
     staleTime: 10_000,
@@ -202,25 +232,54 @@ function useScoreboard() {
   })
 }
 
-function useFollowed(games) {
-  const settings = useValue($settings)
-  const slate = games || []
+/** One hook per league — a FIXED-length list, so hook order is stable. Leagues
+ *  the user turned off (and out-of-season ones, which answer with no events)
+ *  cost nothing but stay in the list. */
+function useSlates(enabledKeys) {
+  const keys = new Set(enabledKeys)
 
-  const visible = useMemo(() => {
-    let list = slate
+  return LEAGUES.map((league, index) => {
+    const query = useSlate(league, keys.has(league.key))
 
-    if (settings.follow) {
-      list = list.filter(g => g.away.abbr === settings.follow || g.home.abbr === settings.follow)
+    return {
+      league,
+      index,
+      enabled: keys.has(league.key),
+      isPending: keys.has(league.key) && query.isPending,
+      isError: query.isError,
+      refetch: query.refetch,
+      data: query.data
+    }
+  })
+}
+
+/** `follow` is `league:ABBR` (a bare abbr still matches any league, so settings
+ *  written by v1.0 keep working). */
+function followMatches(game, follow) {
+  if (!follow) {
+    return true
+  }
+
+  const [rawLeague, rawAbbr] = String(follow).includes(':') ? String(follow).split(':') : ['', String(follow)]
+  const abbr = rawAbbr.trim().toUpperCase()
+
+  if (rawLeague && game.league !== rawLeague) {
+    return false
+  }
+
+  return game.away.abbr.toUpperCase() === abbr || game.home.abbr.toUpperCase() === abbr
+}
+
+function visibleGames(slate, settings) {
+  const games = slate?.data?.games || []
+
+  return games.filter(game => {
+    if (settings.liveOnly && game.state === 'post') {
+      return false
     }
 
-    if (settings.liveOnly) {
-      list = list.filter(g => g.state !== 'post')
-    }
-
-    return list
-  }, [slate, settings.follow, settings.liveOnly])
-
-  return { settings, games: visible }
+    return followMatches(game, settings.follow)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -245,16 +304,20 @@ function kickoffLabel(iso) {
   return `${day} ${time}`
 }
 
-function statusLabel(game) {
-  if (game.state === 'in') {
-    return `${game.clock} ${ordinalQuarter(game.period)}`.trim()
+/** Overtime label for a period past regulation, per sport. Hockey names its
+ *  shootout a period too (5), which is the only place the arithmetic breaks. */
+function overtimeLabel(sport, period, regulation) {
+  const extra = period - regulation
+
+  if (extra <= 0) {
+    return ''
   }
 
-  if (game.state === 'post') {
-    return game.shortDetail || 'Final'
+  if (sport === 'hockey' && extra === 2) {
+    return 'SO'
   }
 
-  return kickoffLabel(game.date)
+  return extra === 1 ? 'OT' : `OT${extra}`
 }
 
 function ordinalQuarter(period) {
@@ -262,11 +325,61 @@ function ordinalQuarter(period) {
     return ''
   }
 
-  if (period === 5) {
-    return 'OT'
+  return `${period}${period === 1 ? 'st' : period === 2 ? 'nd' : period === 3 ? 'rd' : 'th'}`
+}
+
+/** In-game status vocabulary: quarters for football/basketball, periods for
+ *  hockey, half-innings for baseball, halves for college football. */
+function liveStatus(game) {
+  const league = LEAGUE_BY_KEY[game.league] || {}
+  const period = game.period || 0
+  const clock = game.clock || ''
+  const overtime = overtimeLabel(game.sport, period, league.regulation ?? 4)
+
+  if (/halftime/i.test(game.shortDetail || '')) {
+    return 'HALF'
   }
 
-  return `${period}${period === 1 ? 'st' : period === 2 ? 'nd' : period === 3 ? 'rd' : 'th'}`
+  if (game.sport === 'baseball') {
+    return game.shortDetail || (period ? `INN ${period}` : 'LIVE')
+  }
+
+  if (overtime) {
+    return clock ? `${clock} ${overtime}` : overtime
+  }
+
+  if (!period) {
+    return 'LIVE'
+  }
+
+  if (game.sport === 'hockey') {
+    return clock ? `${clock} P${period}` : `P${period}`
+  }
+
+  if (game.sport === 'basketball') {
+    return clock ? `${clock} Q${period}` : `Q${period}`
+  }
+
+  return `${clock} ${ordinalQuarter(period)}`.trim()
+}
+
+function statusLabel(game) {
+  if (game.state === 'in') {
+    return liveStatus(game)
+  }
+
+  if (game.state === 'post') {
+    const detail = game.shortDetail || ''
+    const overtime = overtimeLabel(game.sport, game.period, (LEAGUE_BY_KEY[game.league]?.regulation ?? 4))
+
+    if (/^final/i.test(detail)) {
+      return detail
+    }
+
+    return overtime ? `Final/${overtime}` : 'Final'
+  }
+
+  return kickoffLabel(game.date)
 }
 
 function readableOn(hex) {
@@ -386,6 +499,8 @@ async function installUpdate(source) {
 // ---------------------------------------------------------------------------
 
 const TICKER_HEIGHT = 20
+/** How long each live league holds the ticker before the next one takes it. */
+const ROTATE_MS = 25_000
 
 const MONO = {
   fontVariantNumeric: 'tabular-nums',
@@ -464,7 +579,25 @@ const SEP = () =>
 // Ticker segment
 // ---------------------------------------------------------------------------
 
-function Segment({ game, onOpen }) {
+function LeagueChip({ league }) {
+  return jsx('span', {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '0 3px',
+      borderRadius: 2,
+      border: '1px solid var(--ui-stroke-secondary)',
+      color: 'var(--ui-text-quaternary)',
+      fontSize: 8.5,
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      flex: '0 0 auto'
+    },
+    children: leagueLabel(league)
+  })
+}
+
+function Segment({ game, onOpen, showLeague }) {
   const live = game.state === 'in'
   const finished = game.state === 'post'
   const awayWon = finished && game.away.winner
@@ -502,6 +635,7 @@ function Segment({ game, onOpen }) {
       flex: '0 0 auto'
     },
     children: [
+      showLeague ? jsx(LeagueChip, { key: 'league', league: game.league }) : null,
       jsxs('span', {
         key: 'teams',
         style: { display: 'inline-flex', alignItems: 'center', gap: 3 },
@@ -567,7 +701,7 @@ function Segment({ game, onOpen }) {
   })
 }
 
-function Brand() {
+function Brand({ label }) {
   return jsxs('span', {
     style: {
       display: 'inline-flex',
@@ -591,7 +725,7 @@ function Brand() {
           transform: 'rotate(-20deg)'
         }
       }),
-      'NFL'
+      label
     ]
   })
 }
@@ -697,7 +831,7 @@ function Marquee({ speed, paused, signature, children }) {
 // Settings popover (from the gear in the ticker)
 // ---------------------------------------------------------------------------
 
-function SettingsPanel({ games, settings }) {
+function SettingsPanel({ slates, settings }) {
   const update = useUpdateCheck()
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -720,19 +854,49 @@ function SettingsPanel({ games, settings }) {
   const teams = useMemo(() => {
     const seen = new Map()
 
-    for (const game of games || []) {
-      for (const team of [game.away, game.home]) {
-        if (team?.abbr && !seen.has(team.abbr)) {
-          seen.set(team.abbr, team.name || team.abbr)
+    for (const slate of slates || []) {
+      for (const game of slate.data?.games || []) {
+        for (const team of [game.away, game.home]) {
+          if (team?.abbr) {
+            seen.set(`${game.league}:${team.abbr}`, `${leagueLabel(game.league)} · ${team.abbr} ${team.name || ''}`.trim())
+          }
         }
       }
     }
 
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [games])
+  }, [slates])
 
   const row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '7px 0' }
   const label = { fontSize: 11.5, color: 'var(--ui-text-secondary)' }
+  const pill = (active, onClick, text, key) =>
+    jsx(
+      'button',
+      {
+        type: 'button',
+        onClick,
+        style: {
+          padding: '2px 6px',
+          borderRadius: 4,
+          border: `1px solid ${active ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}`,
+          background: active ? 'var(--ui-control-hover-background)' : 'transparent',
+          color: active ? 'var(--ui-text-primary)' : 'var(--ui-text-quaternary)',
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          cursor: 'pointer'
+        },
+        children: text
+      },
+      key
+    )
+
+  const toggleLeague = key => {
+    const current = settings.leagues || []
+    const next = current.includes(key) ? current.filter(item => item !== key) : [...current, key]
+
+    saveSettings({ leagues: next.length ? next : current })
+  }
 
   return jsxs('div', {
     style: { display: 'flex', flexDirection: 'column', gap: 2, width: 248, fontSize: 12 },
@@ -740,7 +904,41 @@ function SettingsPanel({ games, settings }) {
       jsx('div', {
         key: 'title',
         style: { fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--ui-text-quaternary)', paddingBottom: 4 },
-        children: 'NFL TICKER'
+        children: 'SCORE TICKER'
+      }),
+      jsxs('div', {
+        key: 'leagues',
+        style: { ...row, gap: 6, paddingBottom: 2, alignItems: 'center' },
+        children: [
+          jsx('span', { key: 'l', style: { ...label, flex: '0 0 auto' }, children: 'Sports' }),
+          jsx('span', {
+            key: 'chips',
+            style: { display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'flex-end' },
+            children: LEAGUES.map(league =>
+              pill(
+                (settings.leagues || []).includes(league.key),
+                () => toggleLeague(league.key),
+                league.label,
+                league.key
+              )
+            )
+          })
+        ]
+      }),
+      jsxs('div', {
+        key: 'mode',
+        style: row,
+        children: [
+          jsx('span', { key: 'l', style: label, children: 'Show' }),
+          jsx('span', {
+            key: 'seg',
+            style: { display: 'flex', gap: 3 },
+            children: [
+              pill(settings.mode === 'auto', () => saveSettings({ mode: 'auto' }), 'One league', 'auto'),
+              pill(settings.mode === 'all', () => saveSettings({ mode: 'all' }), 'All', 'all')
+            ]
+          })
+        ]
       }),
       jsxs('label', {
         key: 'follow',
@@ -761,8 +959,8 @@ function SettingsPanel({ games, settings }) {
               maxWidth: 132
             },
             children: [
-              jsx('option', { key: '', value: '', children: 'Whole slate' }, ''),
-              ...teams.map(([abbr, name]) => jsx('option', { key: abbr, value: abbr, children: `${abbr} — ${name}` }, abbr))
+              jsx('option', { key: '', value: '', children: 'Everything' }, ''),
+              ...teams.map(([value, name]) => jsx('option', { key: value, value, children: name }, value))
             ]
           })
         ]
@@ -811,7 +1009,7 @@ function SettingsPanel({ games, settings }) {
       jsx('div', {
         key: 'hint',
         style: { fontSize: 10.5, color: 'var(--ui-text-quaternary)', paddingTop: 6, lineHeight: 1.4 },
-        children: 'Hover the ticker to pause. Click a game for the full board.'
+        children: 'Hover to pause · click a game for the board · auto rotates the live leagues.'
       }),
       jsxs('div', {
         key: 'version',
@@ -872,33 +1070,75 @@ function SettingsPanel({ games, settings }) {
 function TickerBar() {
   useStyles()
 
-  const query = useScoreboard()
+  const settings = useValue($settings)
+  const slates = useSlates(settings.leagues)
   const update = useUpdateCheck()
   const updateReady = Boolean(update.data && isNewer(update.data.version, VERSION))
-  const { settings, games } = useFollowed(query.data?.games)
   const [hover, setHover] = useState(false)
   const [pinned, setPinned] = useState(false)
   const [open, setOpen] = useState(false)
+  const [tick, setTick] = useState(0)
 
   const openBoard = () => host.navigate('/nfl')
+  const withGames = slates.filter(slate => (slate.data?.games?.length || 0) > 0)
+  const liveSlates = withGames.filter(slate => slate.data.games.some(game => game.state === 'in'))
+  const live = slates.filter(slate => slate.enabled)
+  const loading = live.some(slate => slate.isPending)
+  const errored = live.length > 0 && live.every(slate => slate.isError)
+
+  // Auto mode shows ONE league: the one your team is playing in, else the live
+  // leagues on a slow rotation, else whatever is next on the calendar.
+  const focusKey = useMemo(() => {
+    const followedLive = liveSlates.find(slate =>
+      slate.data.games.some(game => game.state === 'in' && followMatches(game, settings.follow))
+    )
+
+    if (followedLive) {
+      return followedLive.league.key
+    }
+
+    if (liveSlates.length) {
+      return liveSlates[tick % liveSlates.length].league.key
+    }
+
+    const upcoming = withGames.find(slate => slate.data.games.some(game => game.state === 'pre'))
+
+    return (upcoming || withGames[0])?.league.key || ''
+  }, [slates, settings.follow, tick])
+
+  const rotating = settings.mode === 'auto' && liveSlates.length > 1
+
+  useEffect(() => {
+    if (!rotating) {
+      return undefined
+    }
+
+    const timer = setInterval(() => setTick(value => value + 1), ROTATE_MS)
+
+    return () => clearInterval(timer)
+  }, [rotating])
+
+  const shown = (settings.mode === 'all' ? withGames : withGames.filter(slate => slate.league.key === focusKey))
+    .map(slate => ({ league: slate.league.key, games: visibleGames(slate, settings) }))
+    .filter(entry => entry.games.length > 0)
 
   const content = []
 
-  if (query.isPending) {
+  if (!shown.length && loading) {
     content.push(
       jsx(
         'span',
-        { style: { color: 'var(--ui-text-quaternary)', fontSize: 9.5, letterSpacing: '0.06em' }, children: 'LOADING SLATE…' },
+        { style: { color: 'var(--ui-text-quaternary)', fontSize: 9.5, letterSpacing: '0.06em' }, children: 'LOADING SLATES…' },
         'load'
       )
     )
-  } else if (query.isError) {
+  } else if (!shown.length && errored) {
     content.push(
       jsx(
         'button',
         {
           type: 'button',
-          onClick: () => void query.refetch(),
+          onClick: () => slates.forEach(slate => void slate.refetch()),
           style: {
             background: 'transparent',
             border: 0,
@@ -912,22 +1152,28 @@ function TickerBar() {
         'err'
       )
     )
-  } else if (!games.length) {
+  } else if (!shown.length) {
     content.push(
       jsx(
         'span',
         {
           style: { color: 'var(--ui-text-quaternary)', fontSize: 9.5, letterSpacing: '0.05em', textTransform: 'uppercase' },
-          children: settings.follow ? `No game for ${settings.follow}` : 'No games on the slate'
+          children: settings.follow ? `No game for ${settings.follow.replace(':', ' ')}` : 'No games on the slate'
         },
         'empty'
       )
     )
   } else {
-    games.forEach(game => {
-      content.push(jsx(Segment, { game, onOpen: openBoard }, game.id))
-      content.push(jsx(SEP, {}, `sep-${game.id}`))
-    })
+    for (const entry of shown) {
+      if (settings.mode === 'all') {
+        content.push(jsx(LeagueChip, { league: entry.league }, `chip-${entry.league}`))
+      }
+
+      for (const game of entry.games) {
+        content.push(jsx(Segment, { game, onOpen: openBoard }, game.id))
+        content.push(jsx(SEP, {}, `sep-${game.id}`))
+      }
+    }
   }
 
   const bar = jsxs('div', {
@@ -945,12 +1191,14 @@ function TickerBar() {
       overflow: 'hidden'
     },
     children: [
-      jsx(Brand, {}, 'brand'),
+      jsx(Brand, { label: settings.mode === 'all' ? 'SCORES' : leagueLabel(focusKey) || 'SCORES' }, 'brand'),
       content.length
         ? jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            signature: `${games.map(g => `${g.id}:${g.away.score}-${g.home.score}:${g.clock}:${g.state}`).join('|')}|${settings.follow}|${query.isPending}`,
+            signature: shown
+              .map(entry => `${entry.league}:${entry.games.map(g => `${g.id}:${g.away.score}-${g.home.score}:${g.clock}:${g.state}`).join(',')}`)
+              .join('|') || `${loading}|${errored}`,
             paused: hover || pinned || !settings.scroll,
             children: content
           })
@@ -965,7 +1213,7 @@ function TickerBar() {
             asChild: true,
             children: jsx('button', {
               type: 'button',
-              title: updateReady ? `NFL ticker settings — v${update.data.version} available` : 'NFL ticker settings',
+              title: updateReady ? `Score ticker settings — v${update.data.version} available` : 'Score ticker settings',
               style: {
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -989,7 +1237,7 @@ function TickerBar() {
             align: 'end',
             sideOffset: 8,
             collisionPadding: 10,
-            children: jsx(SettingsPanel, { games: query.data?.games, settings })
+            children: jsx(SettingsPanel, { slates, settings })
           })
         ]
       }),
@@ -1102,10 +1350,10 @@ function TeamRow({ team, score, winner, live, dim }) {
   })
 }
 
-function LeadersPanel({ gameId }) {
+function LeadersPanel({ game }) {
   const summary = useQuery({
-    queryKey: ['nfl-ticker', 'summary', gameId],
-    queryFn: ({ signal }) => getJSON(summaryUrl(gameId), signal),
+    queryKey: ['nfl-ticker', 'summary', game.league, game.id],
+    queryFn: ({ signal }) => getJSON(summaryUrl(LEAGUE_BY_KEY[game.league] || LEAGUES[0], game.id), signal),
     staleTime: 60_000,
     refetchInterval: 60_000,
     retry: 0
@@ -1305,55 +1553,154 @@ function GameCard({ game }) {
         },
         children: expanded ? 'Hide details' : 'Details'
       }),
-      expanded ? jsx(LeadersPanel, { key: 'panel', gameId: game.id }) : null
+      expanded ? jsx(LeadersPanel, { key: 'panel', game }) : null
     ].filter(Boolean)
   })
 }
 
+function LeagueSection({ league, games, week }) {
+  return jsxs('section', {
+    style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 },
+    children: [
+      jsxs('div', {
+        style: { display: 'flex', alignItems: 'baseline', gap: 8, paddingBottom: 2, borderBottom: '1px solid var(--ui-stroke-tertiary)' },
+        children: [
+          jsx('span', { style: { fontSize: 12, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--ui-text-secondary)' }, children: league.label }),
+          week ? jsx('span', { style: { fontSize: 10.5, color: 'var(--ui-text-quaternary)' }, children: week }) : null,
+          jsx('span', { style: { flex: '1 1 auto' } }),
+          liveCount(games)
+            ? jsxs('span', {
+                style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--ui-text-tertiary)' },
+                children: [jsx(Dot, { live: true }), `${liveCount(games)} live`]
+              })
+            : null
+        ]
+      }),
+      jsx('div', {
+        style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))', gap: 12 },
+        children: games.map(game => jsx(GameCard, { game }, game.id))
+      })
+    ]
+  })
+}
+
 function NflPage() {
-  const query = useScoreboard()
-  const { settings, games } = useFollowed(query.data?.games)
-  const all = query.data?.games || []
+  const settings = useValue($settings)
+  const slates = useSlates(settings.leagues)
+  const [filter, setFilter] = useState('all')
+  const groups = slates
+    .map(slate => ({ league: slate.league, games: visibleGames(slate, settings), week: slate.data?.week || '' }))
+    .filter(group => group.games.length > 0)
+    .filter(group => filter === 'all' || group.league.key === filter)
+  const live = groups.reduce((total, group) => total + liveCount(group.games), 0)
+  const active = slates.filter(slate => slate.enabled)
+  const loading = active.some(slate => slate.isPending)
+  const errored = active.length > 0 && active.every(slate => slate.isError)
+  const updated = Math.max(0, ...active.map(slate => slate.data?.updatedAt || 0))
+
+  const chipRow = jsxs('div', {
+    style: { display: 'flex', alignItems: 'center', gap: 4, marginBottom: 12, flexWrap: 'wrap' },
+    children: [
+      jsx(
+        'button',
+        {
+          type: 'button',
+          onClick: () => setFilter('all'),
+          style: {
+            padding: '2px 8px',
+            borderRadius: 999,
+            border: `1px solid ${filter === 'all' ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}`,
+            background: filter === 'all' ? 'var(--ui-control-hover-background)' : 'transparent',
+            color: filter === 'all' ? 'var(--ui-text-primary)' : 'var(--ui-text-quaternary)',
+            fontSize: 10.5,
+            letterSpacing: '0.05em',
+            cursor: 'pointer'
+          },
+          children: 'ALL'
+        },
+        'all'
+      ),
+      ...slates
+        .filter(slate => slate.enabled)
+        .map(slate =>
+          jsx(
+            'button',
+            {
+              type: 'button',
+              onClick: () => setFilter(slate.league.key),
+              style: {
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: `1px solid ${filter === slate.league.key ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}`,
+                background: filter === slate.league.key ? 'var(--ui-control-hover-background)' : 'transparent',
+                color: filter === slate.league.key ? 'var(--ui-text-primary)' : 'var(--ui-text-quaternary)',
+                fontSize: 10.5,
+                letterSpacing: '0.05em',
+                cursor: 'pointer',
+                opacity: (slate.data?.games?.length || 0) ? 1 : 0.45
+              },
+              children: slate.league.label
+            },
+            slate.league.key
+          )
+        )
+    ]
+  })
 
   const header = jsxs('div', {
     style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
     children: [
-      jsx('span', { style: { fontSize: 17, fontWeight: 700, letterSpacing: '0.02em' }, children: 'NFL' }),
-      query.data?.week ? jsx('span', { style: { fontSize: 12, color: 'var(--ui-text-tertiary)' }, children: query.data.week }) : null,
-      jsx('span', { style: { flex: '1 1 auto' } }),
+      jsx('span', { style: { fontSize: 17, fontWeight: 700, letterSpacing: '0.02em' }, children: 'Scores' }),
       jsx('span', {
         style: { fontSize: 11, color: 'var(--ui-text-quaternary)', ...MONO },
-        children: liveCount(all) ? `${liveCount(all)} live · updated ${nowLabel(query.data.updatedAt)}` : `updated ${nowLabel(query.data?.updatedAt || Date.now())}`
+        children: live ? `${live} live · updated ${updated ? nowLabel(updated) : '—'}` : `updated ${updated ? nowLabel(updated) : '—'}`
       }),
-      jsx(Button, { size: 'sm', variant: 'secondary', onClick: () => void query.refetch(), children: 'Refresh' })
-    ].filter(Boolean)
+      jsx('span', { style: { flex: '1 1 auto' } }),
+      jsx(Button, {
+        size: 'sm',
+        variant: 'secondary',
+        onClick: () => slates.forEach(slate => void slate.refetch()),
+        children: 'Refresh'
+      })
+    ]
   })
 
   let body
 
-  if (query.isPending) {
-    body = jsx('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary)' }, children: 'Loading the slate…' })
-  } else if (query.isError) {
+  if (loading && !groups.length) {
+    body = jsx('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary)' }, children: 'Loading the slates…' })
+  } else if (!groups.length && errored) {
     body = jsxs('div', {
       style: { fontSize: 12, color: 'var(--ui-text-secondary)', display: 'flex', flexDirection: 'column', gap: 8 },
       children: [
-        jsx('span', { children: `Could not reach ESPN: ${query.error?.message || 'unknown error'}` }),
-        jsx(Button, { size: 'sm', variant: 'secondary', onClick: () => void query.refetch(), children: 'Try again' })
+        jsx('span', { children: 'Could not reach ESPN for any league.' }),
+        jsx(Button, {
+          size: 'sm',
+          variant: 'secondary',
+          onClick: () => slates.forEach(slate => void slate.refetch()),
+          children: 'Try again'
+        })
       ]
     })
-  } else if (!games.length) {
-    body = jsx('div', {
-      style: { fontSize: 12, color: 'var(--ui-text-tertiary)' },
-      children: settings.follow ? `No games for ${settings.follow} on this slate.` : 'No games on the slate.'
+  } else if (!groups.length) {
+    body = jsxs('div', {
+      style: { fontSize: 12, color: 'var(--ui-text-tertiary)', display: 'flex', flexDirection: 'column', gap: 6 },
+      children: [
+        jsx('span', {
+          children: settings.follow
+            ? `No games for ${settings.follow.replace(':', ' ')} on these slates.`
+            : 'No games on the selected slates.'
+        }),
+        jsx('span', {
+          style: { fontSize: 11, color: 'var(--ui-text-quaternary)' },
+          children: 'Season over or out of range — add a sport in the ticker settings.'
+        })
+      ]
     })
   } else {
     body = jsx('div', {
-      style: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))',
-        gap: 12
-      },
-      children: games.map(game => jsx(GameCard, { game }, game.id))
+      style: { display: 'flex', flexDirection: 'column' },
+      children: groups.map(group => jsx(LeagueSection, { league: group.league, games: group.games, week: group.week }, group.league.key))
     })
   }
 
@@ -1366,7 +1713,7 @@ function NflPage() {
       flexDirection: 'column',
       fontSize: 12
     },
-    children: [header, body]
+    children: [header, chipRow, body]
   })
 }
 
@@ -1376,7 +1723,7 @@ function NflPage() {
 
 export default {
   id: ID,
-  name: 'NFL Ticker',
+  name: 'Score Ticker',
   version: VERSION,
 
   register(ctx) {
@@ -1401,15 +1748,15 @@ export default {
         id: 'nav',
         area: SIDEBAR_NAV_AREA,
         order: 55,
-        data: { path: '/nfl', label: 'NFL', codicon: 'broadcast' }
+        data: { path: '/nfl', label: 'Scores', codicon: 'broadcast' }
       },
       {
         id: 'open',
         area: PALETTE_AREA,
         data: {
           id: 'nfl.open',
-          label: 'NFL: Open scoreboard',
-          keywords: ['nfl', 'football', 'scores', 'ticker'],
+          label: 'Scores: Open the scoreboard',
+          keywords: ['scores', 'nfl', 'nba', 'nhl', 'mlb', 'college', 'sports', 'ticker'],
           run: () => host.navigate('/nfl')
         }
       },
@@ -1418,11 +1765,11 @@ export default {
         area: PALETTE_AREA,
         data: {
           id: 'nfl.refresh',
-          label: 'NFL: Refresh scores',
-          keywords: ['nfl', 'scores', 'refresh'],
+          label: 'Scores: Refresh every league',
+          keywords: ['scores', 'sports', 'refresh', 'ticker'],
           run: () => {
-            void queryClient.invalidateQueries({ queryKey: QUERY_KEY })
-            host.notify({ kind: 'info', message: 'NFL scores refreshed' })
+            void queryClient.invalidateQueries({ queryKey: ['nfl-ticker', 'slate'] })
+            host.notify({ kind: 'info', message: 'Scores refreshed' })
           }
         }
       },
@@ -1431,8 +1778,8 @@ export default {
         area: PALETTE_AREA,
         data: {
           id: 'nfl.checkUpdates',
-          label: 'NFL: Check the ticker for updates',
-          keywords: ['nfl', 'ticker', 'update', 'upgrade'],
+          label: 'Scores: Check the ticker for updates',
+          keywords: ['ticker', 'update', 'upgrade'],
           run: () => {
             void queryClient.invalidateQueries({ queryKey: UPDATE_KEY }).then(async () => {
               const latest = queryClient.getQueryData(UPDATE_KEY)
@@ -1440,9 +1787,9 @@ export default {
               if (!latest) {
                 host.notify({ kind: 'error', message: 'Could not reach GitHub for the update check' })
               } else if (isNewer(latest.version, VERSION)) {
-                host.notify({ kind: 'info', message: `NFL Ticker v${latest.version} is available — open the ticker settings gear` })
+                host.notify({ kind: 'info', message: `Score Ticker v${latest.version} is available — open the ticker settings gear` })
               } else {
-                host.notify({ kind: 'info', message: `NFL Ticker is up to date (v${VERSION})` })
+                host.notify({ kind: 'info', message: `Score Ticker is up to date (v${VERSION})` })
               }
             })
           }
@@ -1453,8 +1800,8 @@ export default {
         area: PALETTE_AREA,
         data: {
           id: 'nfl.toggleScroll',
-          label: 'NFL: Toggle ticker scrolling',
-          keywords: ['nfl', 'ticker', 'scroll', 'pause'],
+          label: 'Scores: Toggle ticker scrolling',
+          keywords: ['ticker', 'scores', 'scroll', 'pause'],
           run: () => {
             const next = saveSettings({ scroll: !$settings.get().scroll })
             host.notify({ kind: 'info', message: next.scroll ? 'Ticker scrolling on' : 'Ticker paused' })
