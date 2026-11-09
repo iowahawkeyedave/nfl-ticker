@@ -88,7 +88,7 @@ the command palette (`Ctrl/Cmd+K`).
 |--------|-----|
 | Open the scoreboard | Click any game in the ticker or the pane |
 | Move it anywhere | Drag the **Scores** pane in the layout editor |
-| Ticker settings | Gear at the right end of the ticker |
+| Ticker settings | Gear — right end of the status-bar ticker, or far left of the pane strip |
 | Pause / resume | Hover the ticker, or the pause button next to the gear |
 | Every command | `Ctrl/Cmd+K` → "Scores: …" |
 
@@ -133,6 +133,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.6** — the settings gear is on the pane strip too, at its far left (it opens inward
+  from there), so sports/follow/speed are reachable without the status bar.
 - **1.2.5** — the pane docks at 32px (strip 31px + its 1px border, so a collapsed
   pane shows no sliver of the list).
 - **1.2.4** — the marquee is driven by `requestAnimationFrame` instead of a CSS

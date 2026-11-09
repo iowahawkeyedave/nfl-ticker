@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.5'
+export const VERSION = '1.2.6'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -1160,7 +1160,7 @@ function ScoreTickerPane() {
     return () => $paneMounted.set(false)
   }, [])
 
-  const { settings, shown, focusKey, loading, errored } = useTickerModel()
+  const { settings, slates, shown, focusKey, loading, errored, update } = useTickerModel()
   const openBoard = () => host.navigate('/nfl')
 
   const strip = []
@@ -1222,6 +1222,7 @@ function ScoreTickerPane() {
           borderBottom: '1px solid var(--ui-stroke-tertiary)'
         },
         children: [
+          jsx(SettingsGear, { key: 'gear', slates, settings, update, align: 'start', size: 18 }),
           jsx(Brand, { key: 'brand', label: settings.mode === 'all' ? 'SCORES' : leagueLabel(focusKey) || 'SCORES' }),
           jsx(Marquee, {
             key: 'm',
@@ -1362,10 +1363,56 @@ function StatusTicker() {
   return jsx(TickerBar, {})
 }
 
-function TickerBar() {
-  const { settings, slates, shown, focusKey, loading, errored, updateReady, update } = useTickerModel()
-  const [pinned, setPinned] = useState(false)
+/** The settings gear, with its popover. Lives on the right of the status-bar
+ *  ticker and on the LEFT of the pane strip (where the popover has room to open
+ *  inward), so both faces share one control. */
+function SettingsGear({ slates, settings, update, align, size }) {
   const [open, setOpen] = useState(false)
+  const updateReady = Boolean(update?.data && isNewer(update.data.version, VERSION))
+  const box = size || 16
+
+  return jsx(Popover, {
+    open,
+    onOpenChange: setOpen,
+    children: [
+      jsx(PopoverTrigger, {
+        key: 'trigger',
+        asChild: true,
+        children: jsx('button', {
+          type: 'button',
+          title: updateReady ? `Score ticker settings — v${update.data.version} available` : 'Score ticker settings',
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: box,
+            height: box,
+            border: 0,
+            borderRadius: 3,
+            background: open ? 'var(--ui-control-hover-background)' : 'transparent',
+            color: updateReady ? 'var(--ui-accent)' : 'var(--ui-text-quaternary)',
+            cursor: 'pointer',
+            flex: '0 0 auto',
+            padding: 0
+          },
+          children: jsx(Codicon, { name: 'settings-gear', size: box - 3 })
+        })
+      }),
+      jsx(PopoverContent, {
+        key: 'content',
+        side: 'top',
+        align: align || 'end',
+        sideOffset: 8,
+        collisionPadding: 10,
+        children: jsx(SettingsPanel, { slates, settings })
+      })
+    ]
+  })
+}
+
+function TickerBar() {
+  const { settings, slates, shown, focusKey, loading, errored, update } = useTickerModel()
+  const [pinned, setPinned] = useState(false)
 
   const openBoard = () => host.navigate('/nfl')
 
@@ -1445,44 +1492,7 @@ function TickerBar() {
             children: content
           })
         : null,
-      jsx(Popover, {
-        key: 'gear',
-        open,
-        onOpenChange: setOpen,
-        children: [
-          jsx(PopoverTrigger, {
-            key: 'trigger',
-            asChild: true,
-            children: jsx('button', {
-              type: 'button',
-              title: updateReady ? `Score ticker settings — v${update.data.version} available` : 'Score ticker settings',
-              style: {
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 16,
-                height: 16,
-                border: 0,
-                borderRadius: 3,
-                background: open ? 'var(--ui-control-hover-background)' : 'transparent',
-                color: updateReady ? 'var(--ui-accent)' : 'var(--ui-text-quaternary)',
-                cursor: 'pointer',
-                flex: '0 0 auto',
-                padding: 0
-              },
-              children: jsx(Codicon, { name: 'settings-gear', size: 12 })
-            })
-          }),
-          jsx(PopoverContent, {
-            key: 'content',
-            side: 'top',
-            align: 'end',
-            sideOffset: 8,
-            collisionPadding: 10,
-            children: jsx(SettingsPanel, { slates, settings })
-          })
-        ]
-      }),
+      jsx(SettingsGear, { key: 'gear', slates, settings, update, align: 'end' }),
       jsx('button', {
         key: 'pin',
         type: 'button',
