@@ -117,6 +117,11 @@ only when you expand a card.
 - ESPN's API is public but unofficial; if they change a field the plugin degrades to
   showing what it can rather than throwing.
 
+## Roadmap
+
+What's next — alerts, win probability, odds, hover cards, more leagues — lives in
+[ROADMAP.md](ROADMAP.md).
+
 ## Version history
 
 - **1.1.0** — five leagues (NFL, CFB, NBA, NHL, MLB), league-aware status lines, auto-focus
