@@ -7,21 +7,15 @@ Renderer-only is a standing constraint: **no Python half, no `config.yaml` chang
 that needs a backend (e.g. a Yahoo-fantasy score in the ticker) is explicitly out of scope
 unless that decision is reopened.
 
-## v1.3 candidates
+## Shipped in 1.3
 
-(These were earmarked for 1.2; the layout pane took that slot.)
+Priority sort, score-change flash, quiet stand-down and multiple followed teams shipped in
+**v1.3.0** — they're no longer on this list.
 
-### Cheap wins (the "it feels smart now" bundle)
+## v1.4 candidates
 
-- **Priority sort** — order segments by what matters: red zone > 4th-quarter one-score >
-  OT > live > upcoming > final, and demote blowouts (3+ score games in the last 10 min).
-  All in `visibleGames`/the sort in `parseScoreboard`; no new data.
-- **Score-change flash** — keep the previous poll's scores per game id and pulse the segment
-  for ~2s when a score appears. Needs a `useRef` snapshot keyed by game id, plus one
-  keyframe in `MARQUEE_CSS`. Do not flash on mount.
-- **Quiet auto-hide** — when every enabled league has nothing live and nothing on today's
-  slate, collapse the bar to a single muted chip (or drop it) instead of sitting on
-  "No games on the slate" all week.
+### Cheap wins
+
 - **Rotation polish** — per-league dwell time, and skip leagues whose games are all final
   when some other league is live (currently `liveSlates` already filters, but the "next up"
   fallback can land on a finished league).
@@ -44,8 +38,6 @@ unless that decision is reopened.
 
 - **Hover card** — hovering a segment opens a popover with per-period linescores, leaders
   and the last 3 plays, fetching `summary?event=` on hover (60s cache) instead of on click.
-- **Multiple followed teams** — `follow` is a single `league:ABBR` string today; move to an
-  array with a migration in `loadSettings` (keep reading the string form).
 - **More leagues** — WNBA (`basketball/wnba`), NCAAM (`basketball/mens-college-basketball`),
   MLS (`soccer/usa.1`), EPL (`soccer/eng.1`), F1 (`racing/f1`). Soccer needs a new status
   branch (minute + stoppage, `FT`, penalties) and a draw-aware winner (no `winner` flag);

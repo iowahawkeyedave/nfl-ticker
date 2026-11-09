@@ -37,7 +37,15 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
   Switch to **All** to scroll every enabled league in one crawl, with a league chip per game.
 - **Pick your sports** — NFL / CFB / NBA / NHL / MLB toggle on and off; out-of-season
   leagues are simply quiet.
-- **Follow one team** across leagues (`NFL · CHI Bears`, `MLB · CHC Cubs`, …).
+- **Follow as many teams as you like** across leagues (`NFL · CHI Bears`, `MLB · CHC Cubs`,
+  `NHL · TOR`…) — chips in the settings, any of them playing is enough to show a game.
+- **Priority order** — the slate sorts itself: red zone > overtime > a one-score 4th quarter >
+  other live games > kickoff within 3h > later today > finals, with live blowouts sinking
+  below the close games and finals newest-first.
+- **Score flash** — a game lights up for ~2.5s when its score changes, so a score in the
+  corner of your eye doesn't get missed.
+- **Stands down when idle** — nothing live and nothing kicking off within 6 hours, and the
+  ticker collapses to a single muted line (status bar keeps just the gear).
 - **Scrolls continuously**, freezes while you hover it, a pause button pins it, and a speed
   control (px/sec). Honours `prefers-reduced-motion` by holding still.
 - **Click any game** for the board.
@@ -89,6 +97,7 @@ the command palette (`Ctrl/Cmd+K`).
 | Open the scoreboard | Click any game in the ticker or the pane |
 | Move it anywhere | Drag the **Scores** pane in the layout editor |
 | Make it bigger | Gear → **Size** S / M / L |
+| Follow more teams | Gear → **Follow → Add a team…** (chips with × to remove) |
 | Ticker settings | Gear — right end of the status-bar ticker, or far left of the pane strip |
 | Pause / resume | Hover the ticker, or the pause button next to the gear |
 | Every command | `Ctrl/Cmd+K` → "Scores: …" |
@@ -134,6 +143,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.3.0** — priority sort, score-change flash, quiet stand-down, and multiple followed
+  teams (`follows` list, migrated from the old single `follow` value).
 - **1.2.7** — ticker size: **S / M / L** scales the pane height (26 / 32 / 40px) and the type
   together; it re-registers the pane's declared height and keeps the settings popover open.
 - **1.2.6** — the settings gear is on the pane strip too, at its far left (it opens inward

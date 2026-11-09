@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.7'
+export const VERSION = '1.3.0'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -74,10 +74,13 @@ const LEAGUE_BY_KEY = Object.fromEntries(LEAGUES.map(league => [league.key, leag
 const leagueLabel = key => LEAGUE_BY_KEY[key]?.label || ''
 
 const DEFAULTS = {
-  follow: '',
+  /** League-scoped teams: 'nfl:CHI', 'mlb:CHC'. Empty = the whole slate. */
+  follows: [],
   speed: 70,
   liveOnly: false,
   scroll: true,
+  /** Stand the ticker down when nothing is live and nothing starts soon. */
+  quiet: true,
   leagues: LEAGUES.map(league => league.key),
   mode: 'auto',
   size: 'normal'
@@ -116,6 +119,13 @@ function saveSettings(patch) {
 function loadSettings() {
   const saved = storage ? storage.get('settings', null) : null
   const next = { ...DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) }
+
+  // v1.2 stored one team as `follow: 'nfl:CHI'`; carry it into the list.
+  if (!Array.isArray(next.follows)) {
+    next.follows = saved && typeof saved.follow === 'string' && saved.follow ? [saved.follow] : []
+  }
+
+  delete next.follow
   METRICS = sizeMetrics(next.size)
 
   return next
@@ -274,12 +284,10 @@ function useSlates(enabledKeys) {
 
 /** `follow` is `league:ABBR` (a bare abbr still matches any league, so settings
  *  written by v1.0 keep working). */
-function followMatches(game, follow) {
-  if (!follow) {
-    return true
-  }
+const teamKey = (league, abbr) => `${league}:${String(abbr).toUpperCase()}`
 
-  const [rawLeague, rawAbbr] = String(follow).includes(':') ? String(follow).split(':') : ['', String(follow)]
+function followsTeam(game, entry) {
+  const [rawLeague, rawAbbr] = String(entry).includes(':') ? String(entry).split(':') : ['', String(entry)]
   const abbr = rawAbbr.trim().toUpperCase()
 
   if (rawLeague && game.league !== rawLeague) {
@@ -289,16 +297,118 @@ function followMatches(game, follow) {
   return game.away.abbr.toUpperCase() === abbr || game.home.abbr.toUpperCase() === abbr
 }
 
-function visibleGames(slate, settings) {
-  const games = slate?.data?.games || []
+function followMatches(game, follows) {
+  const list = Array.isArray(follows) ? follows : follows ? [follows] : []
 
-  return games.filter(game => {
-    if (settings.liveOnly && game.state === 'post') {
+  return list.length === 0 || list.some(entry => followsTeam(game, entry))
+}
+
+/** Display order: what matters now, first.
+ *
+ *  red zone > overtime > a one-score game in the 4th > any other live game >
+ *  kickoff soon > final — and a live blowout sinks below the other live games,
+ *  because a 24-point game in the 4th is already decided.
+ *
+ *  Lower is better; ties fall back to kickoff time. */
+export function priorityOf(game, now = Date.now()) {
+  const regulation = LEAGUE_BY_KEY[game.league]?.regulation ?? 4
+  const margin = Math.abs(Number(game.away.score || 0) - Number(game.home.score || 0))
+  const period = Number(game.period) || 0
+  const overtime = period > regulation
+  const late = overtime || period >= regulation
+  const oneScore = margin <= 8
+  const blowout = margin >= 17 && late
+  const redZone = game.situation?.redZone === true
+
+  if (game.state === 'in') {
+    if (blowout) {
+      // A decided game sinks below the other live games, but a live game still
+      // outranks anything that hasn't kicked off.
+      return 16
+    }
+
+    if (redZone) {
+      return oneScore ? 0 : 4
+    }
+
+    if (overtime) {
+      return oneScore ? 1 : 6
+    }
+
+    if (late && oneScore) {
+      return 2
+    }
+
+    if (late) {
+      return 10
+    }
+
+    return oneScore ? 8 : 12
+  }
+
+  if (game.state === 'pre') {
+    const starts = new Date(game.date).getTime()
+    const soon = Number.isNaN(starts) ? false : starts - now < 3 * 60 * 60 * 1000
+
+    return soon ? 20 : 24
+  }
+
+  return 60
+}
+
+/** Priority first, then kickoff time (most recent final first). */
+export function sortGames(games, now = Date.now()) {
+  return [...games].sort((a, b) => {
+    const byPriority = priorityOf(a, now) - priorityOf(b, now)
+
+    if (byPriority !== 0) {
+      return byPriority
+    }
+
+    const at = new Date(a.date).getTime()
+    const bt = new Date(b.date).getTime()
+    const aTime = Number.isNaN(at) ? 0 : at
+    const bTime = Number.isNaN(bt) ? 0 : bt
+
+    if (a.state === 'post' && b.state === 'post') {
+      return bTime - aTime
+    }
+
+    return aTime - bTime
+  })
+}
+
+/** Nothing live and nothing kicking off within six hours: the ticker can stand
+ *  down instead of scrolling last night's finals all week. */
+export function isQuiet(games, now = Date.now()) {
+  return !games.some(game => {
+    if (game.state === 'in') {
+      return true
+    }
+
+    if (game.state !== 'pre') {
       return false
     }
 
-    return followMatches(game, settings.follow)
+    const starts = new Date(game.date).getTime()
+
+    return !Number.isNaN(starts) && starts - now < 6 * 60 * 60 * 1000
   })
+}
+
+function visibleGames(slate, settings, now = Date.now()) {
+  const games = slate?.data?.games || []
+
+  return sortGames(
+    games.filter(game => {
+      if (settings.liveOnly && game.state === 'post') {
+        return false
+      }
+
+      return followMatches(game, settings.follows)
+    }),
+    now
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -668,7 +778,7 @@ function LeagueChip({ league }) {
   })
 }
 
-function Segment({ game, onOpen, showLeague }) {
+function Segment({ game, onOpen, showLeague, flash }) {
   const live = game.state === 'in'
   const finished = game.state === 'post'
   const awayWon = finished && game.away.winner
@@ -698,7 +808,10 @@ function Segment({ game, onOpen, showLeague }) {
       gap: 4,
       height: '100%',
       padding: '0 2px',
-      background: 'transparent',
+      background: flash ? 'color-mix(in srgb, var(--ui-accent) 16%, transparent)' : 'transparent',
+      boxShadow: flash ? 'inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 45%, transparent)' : undefined,
+      borderRadius: flash ? 4 : 0,
+      transition: 'background 450ms ease, box-shadow 450ms ease',
       border: 0,
       color: 'inherit',
       font: 'inherit',
@@ -999,6 +1112,14 @@ function SettingsPanel({ slates, settings }) {
       key
     )
 
+  const follows = Array.isArray(settings.follows) ? settings.follows : []
+  const addFollow = key => {
+    if (key && !follows.includes(key)) {
+      saveSettings({ follows: [...follows, key] })
+    }
+  }
+  const removeFollow = key => saveSettings({ follows: follows.filter(entry => entry !== key) })
+
   const toggleLeague = key => {
     const current = settings.leagues || []
     const next = current.includes(key) ? current.filter(item => item !== key) : [...current, key]
@@ -1067,26 +1188,84 @@ function SettingsPanel({ slates, settings }) {
           })
         ]
       }),
-      jsxs('label', {
-        key: 'follow',
-        style: row,
+      jsxs('div', {
+        key: 'follows',
+        style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '7px 0' },
         children: [
           jsx('span', { key: 'l', style: label, children: 'Follow' }),
+          follows.length
+            ? jsx('div', {
+                key: 'chips',
+                style: { display: 'flex', flexWrap: 'wrap', gap: 3 },
+                children: follows.map(entry => {
+                  const [leagueKey, abbr] = String(entry).split(':')
+
+                  return jsxs(
+                    'span',
+                    {
+                      style: {
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                        padding: '1px 3px 1px 5px',
+                        borderRadius: 4,
+                        background: 'var(--ui-control-hover-background)',
+                        fontSize: 10.5,
+                        color: 'var(--ui-text-secondary)'
+                      },
+                      children: [
+                        jsx('span', {
+                          key: 'l',
+                          style: { fontSize: 8.5, letterSpacing: '0.08em', color: 'var(--ui-text-quaternary)' },
+                          children: leagueLabel(leagueKey) || '?'
+                        }),
+                        jsx('span', { key: 'a', style: { fontWeight: 700 }, children: abbr || String(entry) }),
+                        jsx('button', {
+                          key: 'x',
+                          type: 'button',
+                          title: `Stop following ${abbr || entry}`,
+                          onClick: () => removeFollow(entry),
+                          style: {
+                            border: 0,
+                            background: 'transparent',
+                            color: 'var(--ui-text-quaternary)',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            lineHeight: '11px',
+                            padding: '0 1px'
+                          },
+                          children: '×'
+                        })
+                      ]
+                    },
+                    entry
+                  )
+                })
+              })
+            : jsx('span', {
+                key: 'none',
+                style: { fontSize: 10.5, color: 'var(--ui-text-quaternary)' },
+                children: 'Everything on the slate'
+              }),
           jsx('select', {
-            key: 's',
-            value: settings.follow,
-            onChange: event => saveSettings({ follow: event.target.value }),
+            key: 'add',
+            value: '',
+            onChange: event => {
+              addFollow(event.target.value)
+              event.target.value = ''
+            },
             style: {
               background: 'var(--ui-bg-input, var(--ui-bg-secondary))',
               color: 'var(--ui-text-primary)',
               border: '1px solid var(--ui-stroke-secondary)',
               borderRadius: 5,
-              fontSize: 11.5,
+              fontSize: 11,
               padding: '3px 4px',
-              maxWidth: 132
+              width: '100%',
+              maxWidth: 232
             },
             children: [
-              jsx('option', { key: '', value: '', children: 'Everything' }, ''),
+              jsx('option', { key: '', value: '', children: 'Add a team…' }, ''),
               ...teams.map(([value, name]) => jsx('option', { key: value, value, children: name }, value))
             ]
           })
@@ -1101,6 +1280,18 @@ function SettingsPanel({ slates, settings }) {
             key: 's',
             checked: settings.liveOnly,
             onCheckedChange: checked => saveSettings({ liveOnly: checked })
+          })
+        ]
+      }),
+      jsxs('label', {
+        key: 'quiet',
+        style: row,
+        children: [
+          jsx('span', { key: 'l', style: label, children: 'Stand down when idle' }),
+          jsx(Switch, {
+            key: 's',
+            checked: settings.quiet !== false,
+            onCheckedChange: checked => saveSettings({ quiet: checked })
           })
         ]
       }),
@@ -1204,19 +1395,20 @@ function ScoreTickerPane() {
     return () => $paneMounted.set(false)
   }, [])
 
-  const { settings, slates, shown, focusKey, loading, errored, update } = useTickerModel()
+  const { settings, slates, shown, focusKey, loading, errored, quiet, flashes, update } = useTickerModel()
   const openBoard = () => host.navigate('/nfl')
 
   const strip = []
+  const standDown = quiet || !shown.length
 
-  if (!shown.length) {
+  if (standDown) {
     strip.push(
       jsx(
         'span',
         {
           style: {
             color: 'var(--ui-text-quaternary)',
-            fontSize: 9.5,
+            fontSize: METRICS.font,
             letterSpacing: '0.05em',
             textTransform: 'uppercase'
           },
@@ -1224,9 +1416,11 @@ function ScoreTickerPane() {
             ? 'Loading slates…'
             : errored
               ? 'Scores unavailable'
-              : settings.follow
-                ? `No game for ${settings.follow.replace(':', ' ')}`
-                : 'No games on the slate'
+              : settings.follows?.length
+                ? `No game for ${settings.follows.join(', ').replace(/:/g, ' ')}`
+                : quiet
+                  ? 'Nothing on the slate'
+                  : 'No games on the slate'
         },
         'notice'
       )
@@ -1238,7 +1432,7 @@ function ScoreTickerPane() {
       }
 
       for (const game of entry.games) {
-        strip.push(jsx(Segment, { game, onOpen: openBoard }, game.id))
+        strip.push(jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
         strip.push(jsx(SEP, {}, `sep-${game.id}`))
       }
     }
@@ -1276,7 +1470,9 @@ function ScoreTickerPane() {
           })
         ]
       }),
-      jsx('div', {
+      standDown
+        ? null
+        : jsx('div', {
         key: 'list',
         style: { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '4px 8px 10px' },
         children: shown.map(entry =>
@@ -1316,7 +1512,7 @@ function ScoreTickerPane() {
                         minWidth: 0,
                         borderBottom: '1px solid var(--ui-stroke-quaternary)'
                       },
-                      children: jsx(Segment, { game, onOpen: openBoard })
+                      children: jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) })
                     },
                     game.id
                   )
@@ -1335,6 +1531,33 @@ function ScoreTickerPane() {
 // Status bar contribution
 // ---------------------------------------------------------------------------
 
+/** Which games changed score since the last poll. Returns the new snapshot so
+ *  the caller can store it — a change is only a change against a previous
+ *  reading, so nothing flashes on first paint. */
+export function changedScores(previous, slates) {
+  const next = new Map()
+  const changed = []
+
+  for (const slate of slates) {
+    for (const game of slate.data?.games || []) {
+      const signature = `${game.away.score}-${game.home.score}`
+
+      next.set(game.id, signature)
+
+      const before = previous.get(game.id)
+
+      if (before !== undefined && before !== signature && game.state !== 'pre') {
+        changed.push(game.id)
+      }
+    }
+  }
+
+  return { next, changed }
+}
+
+/** How long a scored-in game stays lit. */
+const FLASH_MS = 2_600
+
 function useTickerModel() {
   const settings = useValue($settings)
   const slates = useSlates(settings.leagues)
@@ -1351,7 +1574,7 @@ function useTickerModel() {
   // leagues on a slow rotation, else whatever is next on the calendar.
   const focusKey = useMemo(() => {
     const followedLive = liveSlates.find(slate =>
-      slate.data.games.some(game => game.state === 'in' && followMatches(game, settings.follow))
+      slate.data.games.some(game => game.state === 'in' && followMatches(game, settings.follows))
     )
 
     if (followedLive) {
@@ -1365,7 +1588,7 @@ function useTickerModel() {
     const upcoming = withGames.find(slate => slate.data.games.some(game => game.state === 'pre'))
 
     return (upcoming || withGames[0])?.league.key || ''
-  }, [slates, settings.follow, tick])
+  }, [slates, settings.follows, tick])
 
   const rotating = settings.mode === 'auto' && liveSlates.length > 1
 
@@ -1383,6 +1606,46 @@ function useTickerModel() {
     .map(slate => ({ league: slate.league.key, games: visibleGames(slate, settings) }))
     .filter(entry => entry.games.length > 0)
 
+  // Score-change flash: remember the scores we last drew, and light up whatever
+  // moved. The prune timer keeps the lit set from growing.
+  const scoresRef = useRef(new Map())
+  const [flashes, setFlashes] = useState({})
+
+  useEffect(() => {
+    const { next, changed } = changedScores(scoresRef.current, slates)
+
+    scoresRef.current = next
+
+    if (changed.length) {
+      const now = Date.now()
+      setFlashes(current => {
+        const merged = { ...current }
+
+        for (const id of changed) {
+          merged[id] = now
+        }
+
+        return merged
+      })
+    }
+  }, [slates])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const cutoff = Date.now() - FLASH_MS
+
+      setFlashes(current => {
+        const kept = Object.entries(current).filter(([, at]) => at > cutoff)
+
+        return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
+      })
+    }, 700)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  const quiet = Boolean(settings.quiet) && isQuiet(shown.flatMap(entry => entry.games))
+
   return {
     settings,
     slates,
@@ -1390,6 +1653,8 @@ function useTickerModel() {
     focusKey,
     loading,
     errored,
+    quiet,
+    flashes,
     update,
     updateReady: Boolean(update.data && isNewer(update.data.version, VERSION))
   }
@@ -1455,7 +1720,7 @@ function SettingsGear({ slates, settings, update, align, size }) {
 }
 
 function TickerBar() {
-  const { settings, slates, shown, focusKey, loading, errored, update } = useTickerModel()
+  const { settings, slates, shown, focusKey, loading, errored, quiet, flashes, update } = useTickerModel()
   const [pinned, setPinned] = useState(false)
 
   const openBoard = () => host.navigate('/nfl')
@@ -1496,7 +1761,9 @@ function TickerBar() {
         'span',
         {
           style: { color: 'var(--ui-text-quaternary)', fontSize: 9.5, letterSpacing: '0.05em', textTransform: 'uppercase' },
-          children: settings.follow ? `No game for ${settings.follow.replace(':', ' ')}` : 'No games on the slate'
+          children: settings.follows?.length
+            ? `No game for ${settings.follows.join(', ').replace(/:/g, ' ')}`
+            : 'No games on the slate'
         },
         'empty'
       )
@@ -1508,10 +1775,19 @@ function TickerBar() {
       }
 
       for (const game of entry.games) {
-        content.push(jsx(Segment, { game, onOpen: openBoard }, game.id))
+        content.push(jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
         content.push(jsx(SEP, {}, `sep-${game.id}`))
       }
     }
+  }
+
+  // Quiet mode: nothing live, nothing soon — leave the bar with just the gear
+  // (which keeps settings reachable) instead of scrolling stale finals.
+  if (quiet) {
+    return jsx('div', {
+      style: { display: 'flex', alignItems: 'center', height: '100%', maxHeight: TICKER_HEIGHT },
+      children: jsx(SettingsGear, { slates, settings, update, align: 'end' })
+    })
   }
 
   const bar = jsxs('div', {
@@ -1983,8 +2259,8 @@ function NflPage() {
       style: { fontSize: 12, color: 'var(--ui-text-tertiary)', display: 'flex', flexDirection: 'column', gap: 6 },
       children: [
         jsx('span', {
-          children: settings.follow
-            ? `No games for ${settings.follow.replace(':', ' ')} on these slates.`
+          children: settings.follows?.length
+            ? `No games for ${settings.follows.join(', ').replace(/:/g, ' ')} on these slates.`
             : 'No games on the selected slates.'
         }),
         jsx('span', {
