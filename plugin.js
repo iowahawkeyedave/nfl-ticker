@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.6'
+export const VERSION = '1.2.7'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -79,7 +79,8 @@ const DEFAULTS = {
   liveOnly: false,
   scroll: true,
   leagues: LEAGUES.map(league => league.key),
-  mode: 'auto'
+  mode: 'auto',
+  size: 'normal'
 }
 
 /** Live store, seeded from plugin storage in register(). */
@@ -96,9 +97,17 @@ let openExternal = () => Promise.resolve(false)
 function saveSettings(patch) {
   const next = { ...$settings.get(), ...patch }
   $settings.set(next)
+  METRICS = sizeMetrics(next.size)
 
   if (storage) {
     storage.set('settings', next)
+  }
+
+  // The pane's height is a declared fixed-track size, so a new scale has to be
+  // re-registered. Same render identity, so the pane re-renders instead of
+  // remounting — which keeps the open settings popover open.
+  if ('size' in patch) {
+    registerPane()
   }
 
   return next
@@ -106,8 +115,10 @@ function saveSettings(patch) {
 
 function loadSettings() {
   const saved = storage ? storage.get('settings', null) : null
+  const next = { ...DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) }
+  METRICS = sizeMetrics(next.size)
 
-  return { ...DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) }
+  return next
 }
 
 // ---------------------------------------------------------------------------
@@ -541,11 +552,24 @@ async function installUpdate(source) {
 // ---------------------------------------------------------------------------
 
 const TICKER_HEIGHT = 20
-/** The pane's collapsed height, and the strip that fills it (the strip carries
- *  a 1px bottom border, so the pair adds up exactly and a collapsed pane shows
- *  no sliver of the list underneath). */
-const PANE_HEIGHT = 32
-const PANE_STRIP_HEIGHT = PANE_HEIGHT - 1
+
+/** One scale, applied everywhere the ticker draws text: the pane's collapsed
+ *  height, the strip that fills it (strip = pane - 1px border, so a collapsed
+ *  pane shows no sliver of the list), the type sizes and the list row height.
+ *  The status-bar ticker lives in a fixed 20px bar, so it takes the type scale
+ *  but not the height. */
+const SIZES = {
+  compact: { pane: 26, font: 8.5, chip: 8, brand: 9, pill: 9, score: 9.5, dot: 4, play: 220, row: 20, tag: 12 },
+  normal: { pane: 32, font: 9.5, chip: 8.5, brand: 10, pill: 10, score: 10, dot: 5, play: 280, row: 22, tag: 14 },
+  large: { pane: 40, font: 11, chip: 9.5, brand: 11.5, pill: 11.5, score: 12, dot: 6, play: 340, row: 26, tag: 16 }
+}
+
+const sizeMetrics = size => ({ ...(SIZES[size] || SIZES.normal), strip: (SIZES[size] || SIZES.normal).pane - 1 })
+
+/** Module-level so any leaf can read the current scale without prop drilling;
+ *  every reader sits under a component that subscribes to `$settings`, so a
+ *  size change re-renders the whole ticker. */
+let METRICS = sizeMetrics('normal')
 /** How long each live league holds the ticker before the next one takes it. */
 const ROTATE_MS = 25_000
 
@@ -565,9 +589,9 @@ function TeamTag({ team, possessive, small }) {
       borderRadius: 3,
       background: team.color,
       color: readableOn(team.color),
-      fontSize: small ? 9 : 10,
+      fontSize: METRICS.pill,
       fontWeight: 800,
-      lineHeight: small ? '12px' : '14px',
+      lineHeight: `${METRICS.tag}px`,
       letterSpacing: '0.04em',
       boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.10)',
       flex: '0 0 auto',
@@ -600,9 +624,9 @@ function Dot({ live }) {
   return jsx('span', {
     'aria-hidden': true,
     style: {
-      width: 5,
-      height: 5,
-      borderRadius: 3,
+      width: METRICS.dot,
+      height: METRICS.dot,
+      borderRadius: METRICS.dot,
       background: 'var(--ui-green, #55a583)',
       boxShadow: '0 0 4px var(--ui-green, #55a583)',
       flex: '0 0 auto'
@@ -635,7 +659,7 @@ function LeagueChip({ league }) {
       borderRadius: 2,
       border: '1px solid var(--ui-stroke-secondary)',
       color: 'var(--ui-text-quaternary)',
-      fontSize: 8.5,
+      fontSize: METRICS.chip,
       fontWeight: 700,
       letterSpacing: '0.08em',
       flex: '0 0 auto'
@@ -652,6 +676,7 @@ function Segment({ game, onOpen, showLeague }) {
 
   const scoreStyle = won => ({
     fontWeight: won ? 800 : 700,
+    fontSize: METRICS.score,
     color: won ? 'var(--ui-text-primary)' : 'var(--ui-text-secondary)',
     ...MONO
   })
@@ -707,7 +732,7 @@ function Segment({ game, onOpen, showLeague }) {
           gap: 3,
           color: live ? 'var(--ui-text-primary)' : finished ? 'var(--ui-text-tertiary)' : 'var(--ui-text-secondary)',
           fontWeight: live ? 700 : 600,
-          fontSize: 9.5,
+          fontSize: METRICS.font,
           letterSpacing: '0.05em',
           textTransform: 'uppercase',
           ...MONO
@@ -720,7 +745,7 @@ function Segment({ game, onOpen, showLeague }) {
             key: 'dd',
             style: {
               color: game.situation?.redZone ? 'var(--ui-red, #e75e78)' : 'var(--ui-text-secondary)',
-              fontSize: 9.5,
+              fontSize: METRICS.font,
               fontWeight: 600,
               whiteSpace: 'nowrap',
               flex: '0 0 auto'
@@ -734,8 +759,8 @@ function Segment({ game, onOpen, showLeague }) {
             key: 'play',
             style: {
               color: 'var(--ui-text-quaternary)',
-              fontSize: 9.5,
-              maxWidth: 280,
+              fontSize: METRICS.font,
+              maxWidth: METRICS.play,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -757,7 +782,7 @@ function Brand({ label }) {
       flex: '0 0 auto',
       color: 'var(--ui-accent)',
       fontWeight: 800,
-      fontSize: 10,
+      fontSize: METRICS.brand,
       letterSpacing: '0.12em'
     },
     children: [
@@ -1023,6 +1048,25 @@ function SettingsPanel({ slates, settings }) {
           })
         ]
       }),
+      jsxs('div', {
+        key: 'size',
+        style: row,
+        children: [
+          jsx('span', { key: 'l', style: label, children: 'Size' }),
+          jsx('span', {
+            key: 'seg',
+            style: { display: 'flex', gap: 3 },
+            children: ['compact', 'normal', 'large'].map(key =>
+              pill(
+                (settings.size || 'normal') === key,
+                () => saveSettings({ size: key }),
+                key === 'compact' ? 'S' : key === 'normal' ? 'M' : 'L',
+                key
+              )
+            )
+          })
+        ]
+      }),
       jsxs('label', {
         key: 'follow',
         style: row,
@@ -1216,7 +1260,7 @@ function ScoreTickerPane() {
           alignItems: 'center',
           gap: 6,
           flex: '0 0 auto',
-          height: PANE_STRIP_HEIGHT,
+          height: METRICS.strip,
           padding: '0 6px',
           overflow: 'hidden',
           borderBottom: '1px solid var(--ui-stroke-tertiary)'
@@ -1246,7 +1290,7 @@ function ScoreTickerPane() {
                   children: [
                     jsx('span', {
                       style: {
-                        fontSize: 10,
+                        fontSize: METRICS.font + 0.5,
                         fontWeight: 700,
                         letterSpacing: '0.09em',
                         color: 'var(--ui-text-quaternary)'
@@ -1268,7 +1312,7 @@ function ScoreTickerPane() {
                       style: {
                         display: 'flex',
                         alignItems: 'center',
-                        height: 22,
+                        height: METRICS.row,
                         minWidth: 0,
                         borderBottom: '1px solid var(--ui-stroke-quaternary)'
                       },
@@ -1970,6 +2014,44 @@ function NflPage() {
 }
 
 // ---------------------------------------------------------------------------
+// The pane contribution (re-registered when the ticker size changes)
+// ---------------------------------------------------------------------------
+
+let paneCtx = null
+
+/** Stable identity: re-registering the same render function updates the
+ *  contribution's data without remounting the pane, so the open settings
+ *  popover survives a size change. */
+const paneRender = () => jsx(ScoreTickerPane, {})
+
+function paneContribution() {
+  return {
+    id: 'pane',
+    area: 'panes',
+    title: 'Scores',
+    // A bottom strip by default, but the dock hint is a ONE-TIME gesture: no
+    // `enforce`, so wherever you drag it is where it stays. `headerVeto` stands
+    // the zone's tab strip down, which is what makes a 32px ticker read as a
+    // ticker instead of a pane with a title bar.
+    data: {
+      placement: 'bottom',
+      height: `${METRICS.pane}px`,
+      maxHeight: '60vh',
+      headerVeto: true,
+      uncloseable: true,
+      dock: { pane: 'workspace', pos: 'bottom' }
+    },
+    render: paneRender
+  }
+}
+
+function registerPane() {
+  if (paneCtx) {
+    paneCtx.register(paneContribution())
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
@@ -1980,6 +2062,7 @@ export default {
 
   register(ctx) {
     storage = ctx.storage
+    paneCtx = ctx
     openExternal = url => (ctx.os && ctx.os.openExternal ? ctx.os.openExternal(url) : Promise.resolve(false))
     $settings.set(loadSettings())
 
@@ -1990,24 +2073,7 @@ export default {
         order: 120,
         render: () => jsx(StatusTicker, {})
       },
-      {
-        id: 'pane',
-        area: 'panes',
-        title: 'Scores',
-        // A bottom strip by default, but the dock hint is a ONE-TIME gesture:
-        // no `enforce`, so wherever you drag it is where it stays.
-        // `headerVeto` stands the zone's tab strip down, which is what makes a
-        // 30px ticker read as a ticker instead of a pane with a title bar.
-        data: {
-          placement: 'bottom',
-          height: `${PANE_HEIGHT}px`,
-          maxHeight: '60vh',
-          headerVeto: true,
-          uncloseable: true,
-          dock: { pane: 'workspace', pos: 'bottom' }
-        },
-        render: () => jsx(ScoreTickerPane, {})
-      },
+      paneContribution(),
       {
         id: 'page',
         area: ROUTES_AREA,

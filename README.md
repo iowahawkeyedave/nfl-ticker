@@ -88,6 +88,7 @@ the command palette (`Ctrl/Cmd+K`).
 |--------|-----|
 | Open the scoreboard | Click any game in the ticker or the pane |
 | Move it anywhere | Drag the **Scores** pane in the layout editor |
+| Make it bigger | Gear → **Size** S / M / L |
 | Ticker settings | Gear — right end of the status-bar ticker, or far left of the pane strip |
 | Pause / resume | Hover the ticker, or the pause button next to the gear |
 | Every command | `Ctrl/Cmd+K` → "Scores: …" |
@@ -133,6 +134,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.7** — ticker size: **S / M / L** scales the pane height (26 / 32 / 40px) and the type
+  together; it re-registers the pane's declared height and keeps the settings popover open.
 - **1.2.6** — the settings gear is on the pane strip too, at its far left (it opens inward
   from there), so sports/follow/speed are reachable without the status bar.
 - **1.2.5** — the pane docks at 32px (strip 31px + its 1px border, so a collapsed
