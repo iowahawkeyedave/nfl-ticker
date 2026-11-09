@@ -48,7 +48,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.0'
+export const VERSION = '1.2.1'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -84,6 +84,11 @@ const DEFAULTS = {
 
 /** Live store, seeded from plugin storage in register(). */
 const $settings = atom({ ...DEFAULTS })
+
+/** True while the layout pane is mounted. The ticker exists in exactly one
+ *  place at a time: pin it in a layout zone and the status-bar copy stands
+ *  down, so it can't be on screen twice. Exported so it can be driven in tests. */
+export const $paneMounted = atom(false)
 
 let storage = null
 let openExternal = () => Promise.resolve(false)
@@ -1076,6 +1081,12 @@ function SettingsPanel({ slates, settings }) {
 function ScoreTickerPane() {
   useStyles()
 
+  useEffect(() => {
+    $paneMounted.set(true)
+
+    return () => $paneMounted.set(false)
+  }, [])
+
   const { settings, shown, focusKey, loading, errored, signature } = useTickerModel()
   const [hover, setHover] = useState(false)
   const openBoard = () => host.navigate('/nfl')
@@ -1274,6 +1285,18 @@ function useTickerModel() {
     update,
     updateReady: Boolean(update.data && isNewer(update.data.version, VERSION))
   }
+}
+
+/** Status-bar face of the ticker. Yields to the layout pane: once the pane is
+ *  mounted the bar renders nothing, so the ticker never appears twice. */
+function StatusTicker() {
+  const paneMounted = useValue($paneMounted)
+
+  if (paneMounted) {
+    return null
+  }
+
+  return jsx(TickerBar, {})
 }
 
 function TickerBar() {
@@ -1898,7 +1921,7 @@ export default {
         id: 'ticker',
         area: STATUSBAR_AREAS.left,
         order: 120,
-        render: () => jsx(TickerBar, {})
+        render: () => jsx(StatusTicker, {})
       },
       {
         id: 'pane',

@@ -47,7 +47,9 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
 - **Layout pane** — the same ticker as a **draggable zone**: it docks under the workspace
   as a 30px strip, and from there you drag it anywhere in the layout editor (side rails,
   stacked with the terminal, its own column). Stretch it and the strip stays on top while
-  the games become a scrolling list with league headers.
+  the games become a scrolling list with league headers. **The ticker only ever appears
+  once**: while the pane is in the layout the status-bar copy stands down (and comes back
+  if the pane ever isn't mounted — e.g. on a desktop build too old to host it).
 - **Self-updating** — see [Updates](#updates).
 
 ## Install
@@ -129,6 +131,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.1** — the ticker appears in one place: the status-bar copy yields while the layout
+  pane is mounted.
 - **1.2.0** — layout pane: a draggable `panes` zone (30px strip → scrolling board), docked
   under the workspace once and then wherever you drag it.
 - **1.1.0** — five leagues (NFL, CFB, NBA, NHL, MLB), league-aware status lines, auto-focus
