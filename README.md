@@ -46,7 +46,7 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
   and TV, plus an expandable **Details** panel that pulls ESPN leaders and scoring plays on
   demand. Sidebar nav row + command-palette entries.
 - **Layout pane** — the same ticker as a **draggable zone**: it docks under the workspace
-  as a 30px strip, and from there you drag it anywhere in the layout editor (side rails,
+  as a 32px strip, and from there you drag it anywhere in the layout editor (side rails,
   stacked with the terminal, its own column). Stretch it and the strip stays on top while
   the games become a scrolling list with league headers. **The ticker only ever appears
   once**: while the pane is in the layout the status-bar copy stands down (and comes back
@@ -133,6 +133,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.5** — the pane docks at 32px (strip 31px + its 1px border, so a collapsed
+  pane shows no sliver of the list).
 - **1.2.4** — the marquee is driven by `requestAnimationFrame` instead of a CSS
   keyframe animation (a keyframe injected before the pane had a width never started),
   and hover-pause reads `:hover` from the DOM so a stray `mouseleave` can't strand it.

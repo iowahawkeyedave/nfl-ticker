@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.4'
+export const VERSION = '1.2.5'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -541,6 +541,11 @@ async function installUpdate(source) {
 // ---------------------------------------------------------------------------
 
 const TICKER_HEIGHT = 20
+/** The pane's collapsed height, and the strip that fills it (the strip carries
+ *  a 1px bottom border, so the pair adds up exactly and a collapsed pane shows
+ *  no sliver of the list underneath). */
+const PANE_HEIGHT = 32
+const PANE_STRIP_HEIGHT = PANE_HEIGHT - 1
 /** How long each live league holds the ticker before the next one takes it. */
 const ROTATE_MS = 25_000
 
@@ -1211,7 +1216,7 @@ function ScoreTickerPane() {
           alignItems: 'center',
           gap: 6,
           flex: '0 0 auto',
-          height: 24,
+          height: PANE_STRIP_HEIGHT,
           padding: '0 6px',
           overflow: 'hidden',
           borderBottom: '1px solid var(--ui-stroke-tertiary)'
@@ -1985,7 +1990,7 @@ export default {
         // 30px ticker read as a ticker instead of a pane with a title bar.
         data: {
           placement: 'bottom',
-          height: '30px',
+          height: `${PANE_HEIGHT}px`,
           maxHeight: '60vh',
           headerVeto: true,
           uncloseable: true,
