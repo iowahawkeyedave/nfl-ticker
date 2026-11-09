@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.3.0'
+export const VERSION = '1.3.1'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -1567,7 +1567,9 @@ function useTickerModel() {
   const active = slates.filter(slate => slate.enabled)
   const loading = active.some(slate => slate.isPending)
   const errored = active.length > 0 && active.every(slate => slate.isError)
-  const withGames = slates.filter(slate => (slate.data?.games?.length || 0) > 0)
+  // `enabled` FIRST: turning a league off leaves its cached data in place, so
+  // filtering on data alone kept showing the league that was switched off.
+  const withGames = slates.filter(slate => slate.enabled && (slate.data?.games?.length || 0) > 0)
   const liveSlates = withGames.filter(slate => slate.data.games.some(game => game.state === 'in'))
 
   // Auto mode shows ONE league: the one your team is playing in, else the live
@@ -2161,6 +2163,7 @@ function NflPage() {
   const slates = useSlates(settings.leagues)
   const [filter, setFilter] = useState('all')
   const groups = slates
+    .filter(slate => slate.enabled)
     .map(slate => ({ league: slate.league, games: visibleGames(slate, settings), week: slate.data?.week || '' }))
     .filter(group => group.games.length > 0)
     .filter(group => filter === 'all' || group.league.key === filter)

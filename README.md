@@ -143,6 +143,9 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.3.1** — switching a sport off now actually removes it: the ticker and the page gate on
+  the league being enabled instead of on having data (a disabled query keeps its cached
+  payload, which is why NBA-only still showed NFL scores).
 - **1.3.0** — priority sort, score-change flash, quiet stand-down, and multiple followed
   teams (`follows` list, migrated from the old single `follow` value).
 - **1.2.7** — ticker size: **S / M / L** scales the pane height (26 / 32 / 40px) and the type
