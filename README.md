@@ -97,7 +97,8 @@ install.
 ## Updates
 
 The plugin knows its own repo. Once an hour (and from **Scores: Check the ticker for
-updates** in the palette) it fetches `plugin.js` from `main` and compares the `VERSION`
+updates** in the palette) it reads `plugin.js` from `main` — via the GitHub contents API
+(uncached), falling back to `raw.githubusercontent.com` — and compares the `VERSION`
 constant. When a newer version is published the gear turns accent-coloured and the
 settings popover offers **Update to vX.Y.Z** — that downloads the file, validates it,
 writes it over its own `plugin.js` (keeping the previous copy as `plugin.js.previous`) and
@@ -131,6 +132,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.2.2** — update checks go through the GitHub contents API first (raw is CDN-cached
+  and can lag a release by minutes), so a new version is visible immediately.
 - **1.2.1** — the ticker appears in one place: the status-bar copy yields while the layout
   pane is mounted.
 - **1.2.0** — layout pane: a draggable `panes` zone (30px strip → scrolling board), docked

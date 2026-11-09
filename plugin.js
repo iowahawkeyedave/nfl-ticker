@@ -48,7 +48,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.2.1'
+export const VERSION = '1.2.2'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -420,6 +420,7 @@ const nowLabel = stamp => new Date(stamp).toLocaleTimeString([], { hour: 'numeri
 const REPO = 'iowahawkeyedave/nfl-ticker'
 const REPO_URL = `https://github.com/${REPO}`
 const REPO_RAW = `https://raw.githubusercontent.com/${REPO}/main/plugin.js`
+const REPO_API = `https://api.github.com/repos/${REPO}/contents/plugin.js?ref=main`
 const UPDATE_KEY = ['nfl-ticker', 'update']
 const openRepo = () => openExternal(REPO_URL)
 
@@ -445,14 +446,47 @@ function isNewer(candidate, current) {
   return false
 }
 
-async function fetchLatestSource() {
-  const response = await fetch(`${REPO_RAW}?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit' })
+function decodeBase64(text) {
+  const bytes = Uint8Array.from(atob(String(text).replace(/\s+/g, '')), char => char.charCodeAt(0))
 
-  if (!response.ok) {
-    throw new Error(`GitHub returned ${response.status}`)
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+/** The contents API first, raw as the fallback: raw.githubusercontent.com sits
+ *  behind a CDN that can serve a stale file for minutes after a push (a cache-
+ *  busting query string does NOT help), so a fresh release would be invisible
+ *  to the update check. The API is uncached. Unauthenticated it allows 60
+ *  requests an hour; we ask once. */
+async function fetchLatestSource() {
+  let text = ''
+
+  try {
+    const response = await fetch(REPO_API, {
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+
+    if (response.ok) {
+      const payload = await response.json()
+
+      if (payload?.encoding === 'base64' && payload?.content) {
+        text = decodeBase64(payload.content)
+      }
+    }
+  } catch {
+    // rate-limited, offline, or CORS — fall through to the raw file
   }
 
-  const text = await response.text()
+  if (!text) {
+    const response = await fetch(`${REPO_RAW}?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit' })
+
+    if (!response.ok) {
+      throw new Error(`GitHub returned ${response.status}`)
+    }
+
+    text = await response.text()
+  }
 
   if (!versionOf(text) || !text.includes(`export const ID = '${ID}'`)) {
     throw new Error('The file at the update URL is not this plugin')
