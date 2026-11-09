@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.3.1'
+export const VERSION = '1.3.2'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -1112,6 +1112,7 @@ function SettingsPanel({ slates, settings }) {
       key
     )
 
+  const cycling = Array.isArray(settings.leagues) ? settings.leagues : []
   const follows = Array.isArray(settings.follows) ? settings.follows : []
   const addFollow = key => {
     if (key && !follows.includes(key)) {
@@ -1154,18 +1155,23 @@ function SettingsPanel({ slates, settings }) {
           })
         ]
       }),
-      jsxs('div', {
-        key: 'mode',
-        style: row,
+      jsxs('label', {
+        key: 'cycle',
+        style: { ...row, opacity: cycling.length <= 1 ? 0.5 : 1 },
         children: [
-          jsx('span', { key: 'l', style: label, children: 'Show' }),
           jsx('span', {
-            key: 'seg',
-            style: { display: 'flex', gap: 3 },
-            children: [
-              pill(settings.mode === 'auto', () => saveSettings({ mode: 'auto' }), 'One league', 'auto'),
-              pill(settings.mode === 'all', () => saveSettings({ mode: 'all' }), 'All', 'all')
-            ]
+            key: 'l',
+            style: { ...label, fontSize: 11.5 },
+            children:
+              cycling.length <= 1
+                ? 'One sport at a time (only one selected)'
+                : 'One sport at a time'
+          }),
+          jsx(Switch, {
+            key: 's',
+            checked: settings.mode !== 'all',
+            disabled: cycling.length <= 1,
+            onCheckedChange: checked => saveSettings({ mode: checked ? 'auto' : 'all' })
           })
         ]
       }),
@@ -1327,7 +1333,7 @@ function SettingsPanel({ slates, settings }) {
       jsx('div', {
         key: 'hint',
         style: { fontSize: 10.5, color: 'var(--ui-text-quaternary)', paddingTop: 6, lineHeight: 1.4 },
-        children: 'Hover to pause · click a game for the board · auto rotates the live leagues.'
+        children: 'Hover to pause · click a game for the board · off = every sport you picked, in one strip.'
       }),
       jsxs('div', {
         key: 'version',

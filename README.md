@@ -34,7 +34,8 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
   dot, possession dot, red-zone highlight, `at` before kickoff, `Final` / `Final/OT`.
 - **Auto-focus (`One league`)** — the ticker shows the league that matters: your team's game
   if it's live, else the live leagues on a **25s rotation**, else whatever is on next.
-  Switch to **All** to scroll every enabled league in one crawl, with a league chip per game.
+  Turn **One sport at a time** off to scroll every sport you picked in one crawl, with a
+  league chip per game.
 - **Pick your sports** — NFL / CFB / NBA / NHL / MLB toggle on and off; out-of-season
   leagues are simply quiet.
 - **Follow as many teams as you like** across leagues (`NFL · CHI Bears`, `MLB · CHC Cubs`,
@@ -143,6 +144,9 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.3.2** — the "Show: One league / All" pair became a single **One sport at a time**
+  switch (it was reading as a second selection control); it greys out when only one sport is
+  picked. Off = every sport you picked, in one strip.
 - **1.3.1** — switching a sport off now actually removes it: the ticker and the page gate on
   the league being enabled instead of on having data (a disabled query keeps its cached
   payload, which is why NBA-only still showed NFL scores).
