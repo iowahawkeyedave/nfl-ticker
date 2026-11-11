@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.3.2'
+export const VERSION = '1.4.0'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -93,6 +93,10 @@ const $settings = atom({ ...DEFAULTS })
  *  place at a time: pin it in a layout zone and the status-bar copy stands
  *  down, so it can't be on screen twice. Exported so it can be driven in tests. */
 export const $paneMounted = atom(false)
+
+/** True while a game's hover card is open: the marquee has to hold still or the
+ *  card would be anchored to a segment that keeps sliding away. */
+const $cardOpen = atom(false)
 
 let storage = null
 let openExternal = () => Promise.resolve(false)
@@ -159,6 +163,7 @@ function parseCompetitor(c) {
     altColor: team.alternateColor ? `#${team.alternateColor}` : team.color ? `#${team.color}` : TEAM_FALLBACK.color,
     logo: team.logo || team.logos?.[0]?.href || '',
     score: c.score !== undefined && c.score !== null && c.score !== '' ? String(c.score) : '',
+    lines: (c.linescores || []).map(line => line.displayValue ?? ''),
     winner: c.winner === true,
     record: c.records?.[0]?.summary || ''
   }
@@ -179,6 +184,20 @@ function parseGame(event, league) {
   const home = bySide.home || TEAM_FALLBACK
   const possessionId = situation.possession ? String(situation.possession) : ''
   const hasSituation = Boolean(situation.down)
+  // ESPN ships win probability inside the last play (NFL/NBA only, and only on
+  // some plays) — after the play, not before it.
+  const rawProbability = situation.probability || situation.lastPlay?.probability || null
+  const probability =
+    rawProbability && typeof rawProbability.homeWinPercentage === 'number'
+      ? {
+          home: rawProbability.homeWinPercentage,
+          away:
+            typeof rawProbability.awayWinPercentage === 'number'
+              ? rawProbability.awayWinPercentage
+              : 1 - rawProbability.homeWinPercentage,
+          tie: typeof rawProbability.tiePercentage === 'number' ? rawProbability.tiePercentage : 0
+        }
+      : null
 
   return {
     id: String(event.id || competition.id || ''),
@@ -203,6 +222,7 @@ function parseGame(event, league) {
           possessionText: situation.possessionText || ''
         }
       : null,
+    probability,
     lastPlay: situation.lastPlay?.text || '',
     venue: competition.venue?.fullName || '',
     broadcast: (competition.broadcasts || [])
@@ -509,6 +529,30 @@ function statusLabel(game) {
   }
 
   return kickoffLabel(game.date)
+}
+
+/** "LAC 84%" — the favourite's live win probability, or '' when ESPN hasn't
+ *  published one (only NFL/NBA carry it, and only once a play has run). */
+/** Whole percent, clamped to 1..99 — "100%" reads like a bug in a live ticker. */
+export const probPct = value => Math.min(99, Math.max(1, Math.round((Number(value) || 0) * 100)))
+
+export function winProbLabel(game) {
+  const probability = game?.probability
+
+  if (!probability || game.state !== 'in') {
+    return ''
+  }
+
+  const { home, away, tie } = probability
+  const top = Math.max(home, away)
+
+  if (!(top > 0) || top <= tie) {
+    return ''
+  }
+
+  const team = home >= away ? game.home : game.away
+
+  return `${team?.abbr || ''} ${probPct(top)}%`.trim()
 }
 
 function readableOn(hex) {
@@ -852,6 +896,21 @@ function Segment({ game, onOpen, showLeague, flash }) {
         },
         children: [jsx(Dot, { key: 'd', live }), statusLabel(game)]
       }),
+      winProbLabel(game) ? jsx(SEP, { key: 's2b' }) : null,
+      winProbLabel(game)
+        ? jsx('span', {
+            key: 'prob',
+            title: 'Live win probability',
+            style: {
+              fontSize: METRICS.font - 0.5,
+              color: 'var(--ui-text-quaternary)',
+              letterSpacing: '0.02em',
+              flex: '0 0 auto',
+              ...MONO
+            },
+            children: winProbLabel(game)
+          })
+        : null,
       situation ? jsx(SEP, { key: 's2' }) : null,
       situation
         ? jsx('span', {
@@ -880,6 +939,290 @@ function Segment({ game, onOpen, showLeague, flash }) {
               flex: '0 1 auto'
             },
             children: play
+          })
+        : null
+    ].filter(Boolean)
+  })
+}
+
+/** What a hover shows: period-by-period scoring straight from the scoreboard
+ *  payload, plus the last few plays (a summary fetch that only happens when a
+ *  card is actually opened). */
+export function GameHoverCard({ game }) {
+  const summary = useQuery({
+    queryKey: ['nfl-ticker', 'plays', game.league, game.id],
+    queryFn: ({ signal }) => getJSON(summaryUrl(LEAGUE_BY_KEY[game.league] || LEAGUES[0], game.id), signal),
+    staleTime: 30_000,
+    retry: 0
+  })
+
+  const recent = (summary.data?.plays || []).slice(-3).reverse()
+  const probability = game.probability
+  const awayPct = probability ? probPct(probability.away) : 0
+  const homePct = probability ? probPct(probability.home) : 0
+
+  const periodHeaders = []
+  const maxPeriods = Math.max(game.away.lines?.length || 0, game.home.lines?.length || 0)
+
+  for (let index = 0; index < maxPeriods; index += 1) {
+    periodHeaders.push(
+      jsx(
+        'span',
+        {
+          style: {
+            width: 22,
+            textAlign: 'right',
+            fontSize: 9.5,
+            color: 'var(--ui-text-quaternary)',
+            ...MONO
+          },
+          children: String(index + 1)
+        },
+        `p${index}`
+      )
+    )
+  }
+
+  // a column header over the total, so the last number isn't a mystery
+  periodHeaders.push(
+    jsx(
+      'span',
+      {
+        style: {
+          minWidth: 26,
+          textAlign: 'right',
+          fontSize: 9.5,
+          color: 'var(--ui-text-quaternary)',
+          ...MONO
+        },
+        children: 'T'
+      },
+      'total'
+    )
+  )
+
+  const line = (side, team) =>
+    jsxs(
+      'div',
+      {
+        style: { display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' },
+        children: [
+          jsx(TeamTag, { key: 't', team, possessive: game.possession === side, small: true }),
+          jsx('span', {
+            key: 'n',
+            style: {
+              flex: '1 1 auto',
+              minWidth: 0,
+              fontSize: 11,
+              color: 'var(--ui-text-secondary)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            },
+            children: team.name || team.abbr
+          }),
+          ...(team.lines || []).map((value, index) =>
+            jsx(
+              'span',
+              {
+                style: {
+                  width: 22,
+                  textAlign: 'right',
+                  fontSize: 10.5,
+                  color: 'var(--ui-text-tertiary)',
+                  ...MONO
+                },
+                children: value
+              },
+              `l${index}`
+            )
+          ),
+          jsx('span', {
+            key: 'total',
+            style: {
+              minWidth: 26,
+              textAlign: 'right',
+              fontSize: 12,
+              fontWeight: 700,
+              color: 'var(--ui-text-primary)',
+              ...MONO
+            },
+            children: team.score || '—'
+          })
+        ]
+      },
+      side
+    )
+
+  return jsxs('div', {
+    style: { display: 'flex', flexDirection: 'column', gap: 4, width: 296 },
+    children: [
+      jsxs('div', {
+        key: 'head',
+        style: { display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 2 },
+        children: [
+          jsx(LeagueChip, { key: 'l', league: game.league }),
+          jsxs('span', {
+            key: 's',
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 10,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              color: 'var(--ui-text-secondary)',
+              ...MONO
+            },
+            children: [jsx(Dot, { key: 'd', live: game.state === 'in' }), statusLabel(game)]
+          }),
+          jsx('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+          game.broadcast
+            ? jsx('span', { key: 'b', style: { fontSize: 9.5, color: 'var(--ui-text-quaternary)' }, children: game.broadcast })
+            : null
+        ].filter(Boolean)
+      }),
+      periodHeaders.length
+        ? jsxs('div', {
+            key: 'periods',
+            style: { display: 'flex', justifyContent: 'flex-end', gap: 6 },
+            children: periodHeaders
+          })
+        : null,
+      line('away', game.away),
+      line('home', game.home),
+      probability
+        ? jsxs('div', {
+            key: 'prob',
+            style: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 3 },
+            children: [
+              jsx('div', {
+                key: 'bar',
+                style: { display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--ui-stroke-tertiary)' },
+                children: [
+                  jsx('span', { key: 'a', style: { width: `${awayPct}%`, background: game.away.color } }),
+                  jsx('span', { key: 'h', style: { width: `${homePct}%`, background: game.home.color } })
+                ]
+              }),
+              jsxs('div', {
+                key: 'labels',
+                style: { display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: 'var(--ui-text-quaternary)', ...MONO },
+                children: [
+                  jsx('span', { key: 'a', children: `${game.away.abbr} ${awayPct}%` }),
+                  jsx('span', { key: 'h', children: `${game.home.abbr} ${homePct}%` })
+                ]
+              })
+            ]
+          })
+        : null,
+      recent.length
+        ? jsxs('div', {
+            key: 'plays',
+            style: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 4, borderTop: '1px solid var(--ui-stroke-tertiary)', marginTop: 2 },
+            children: [
+              jsx('span', {
+                key: 'h',
+                style: { fontSize: 9, letterSpacing: '0.1em', color: 'var(--ui-text-quaternary)' },
+                children: 'RECENT PLAYS'
+              }),
+              ...recent.map((play, index) =>
+                jsxs(
+                  'div',
+                  {
+                    style: { display: 'flex', gap: 6, fontSize: 10.5, color: 'var(--ui-text-tertiary)', lineHeight: 1.3 },
+                    children: [
+                      jsx('span', { style: { width: 24, color: 'var(--ui-text-quaternary)', ...MONO }, children: play.period?.displayValue || '' }),
+                      jsx('span', { style: { flex: '1 1 auto', minWidth: 0 }, children: clip(play.text, 120) })
+                    ]
+                  },
+                  `p${index}`
+                )
+              )
+            ]
+          })
+        : summary.isPending
+          ? jsx('div', { key: 'loading', style: { fontSize: 10, color: 'var(--ui-text-quaternary)', paddingTop: 3 }, children: 'Loading plays…' })
+          : null,
+      game.venue
+        ? jsx('div', { key: 'venue', style: { fontSize: 9.5, color: 'var(--ui-text-quaternary)', paddingTop: 2 }, children: game.venue })
+        : null
+    ].filter(Boolean)
+  })
+}
+
+/** A segment that grows a card on hover. The trigger keeps its click (open the
+ *  board); the card only opens after a short dwell, so sweeping the strip
+ *  doesn't fire a summary request per game. */
+function SegmentWithCard({ game, onOpen, showLeague, flash }) {
+  const [open, setOpen] = useState(false)
+  const dwellRef = useRef(0)
+  const closeRef = useRef(0)
+
+  const stop = () => {
+    clearTimeout(dwellRef.current)
+    clearTimeout(closeRef.current)
+  }
+
+  const enter = () => {
+    clearTimeout(closeRef.current)
+
+    if (!open) {
+      dwellRef.current = setTimeout(() => setOpen(true), 320)
+    }
+  }
+
+  const leave = () => {
+    clearTimeout(dwellRef.current)
+    closeRef.current = setTimeout(() => setOpen(false), 220)
+  }
+
+  useEffect(() => {
+    $cardOpen.set(open)
+
+    return () => stop()
+  }, [open])
+
+  useEffect(
+    () => () => {
+      stop()
+      $cardOpen.set(false)
+    },
+    []
+  )
+
+  return jsx(Popover, {
+    open,
+    onOpenChange: next => setOpen(next),
+    children: [
+      jsx(PopoverTrigger, {
+        key: 'trigger',
+        asChild: true,
+        children: jsx('span', {
+          onMouseEnter: enter,
+          onMouseLeave: leave,
+          style: { display: 'inline-flex', alignItems: 'center', height: '100%', flex: '0 0 auto' },
+          children: jsx(Segment, { game, onOpen, showLeague, flash })
+        })
+      }),
+      open
+        ? jsx(PopoverContent, {
+            key: 'card',
+            side: 'top',
+            align: 'center',
+            sideOffset: 6,
+            collisionPadding: 10,
+            onOpenAutoFocus: event => event.preventDefault(),
+            onMouseEnter: () => clearTimeout(closeRef.current),
+            onMouseLeave: leave,
+            style: {
+              width: 316,
+              padding: '8px 10px 9px',
+              borderRadius: 10,
+              border: '1px solid var(--ui-stroke-secondary)',
+              background: 'var(--ui-bg-elevated, var(--ui-bg-editor))',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.35)'
+            },
+            children: jsx(GameHoverCard, { game })
           })
         : null
     ].filter(Boolean)
@@ -1402,6 +1745,7 @@ function ScoreTickerPane() {
   }, [])
 
   const { settings, slates, shown, focusKey, loading, errored, quiet, flashes, update } = useTickerModel()
+  const cardOpen = useValue($cardOpen)
   const openBoard = () => host.navigate('/nfl')
 
   const strip = []
@@ -1438,7 +1782,7 @@ function ScoreTickerPane() {
       }
 
       for (const game of entry.games) {
-        strip.push(jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
+        strip.push(jsx(SegmentWithCard, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
         strip.push(jsx(SEP, {}, `sep-${game.id}`))
       }
     }
@@ -1471,7 +1815,7 @@ function ScoreTickerPane() {
           jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            paused: !settings.scroll,
+            paused: cardOpen || !settings.scroll,
             children: strip
           })
         ]
@@ -1518,7 +1862,7 @@ function ScoreTickerPane() {
                         minWidth: 0,
                         borderBottom: '1px solid var(--ui-stroke-quaternary)'
                       },
-                      children: jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) })
+                      children: jsx(SegmentWithCard, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) })
                     },
                     game.id
                   )
@@ -1729,6 +2073,7 @@ function SettingsGear({ slates, settings, update, align, size }) {
 
 function TickerBar() {
   const { settings, slates, shown, focusKey, loading, errored, quiet, flashes, update } = useTickerModel()
+  const cardOpen = useValue($cardOpen)
   const [pinned, setPinned] = useState(false)
 
   const openBoard = () => host.navigate('/nfl')
@@ -1783,7 +2128,7 @@ function TickerBar() {
       }
 
       for (const game of entry.games) {
-        content.push(jsx(Segment, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
+        content.push(jsx(SegmentWithCard, { game, onOpen: openBoard, flash: Boolean(flashes[game.id]) }, game.id))
         content.push(jsx(SEP, {}, `sep-${game.id}`))
       }
     }
@@ -1816,7 +2161,7 @@ function TickerBar() {
         ? jsx(Marquee, {
             key: 'm',
             speed: settings.speed,
-            paused: pinned || !settings.scroll,
+            paused: pinned || cardOpen || !settings.scroll,
             children: content
           })
         : null,
@@ -2087,6 +2432,37 @@ function GameCard({ game }) {
         live,
         dim: finished && game.away.winner
       }),
+      game.probability && live
+        ? jsxs('div', {
+            key: 'prob',
+            style: { display: 'flex', flexDirection: 'column', gap: 3, paddingTop: 6 },
+            children: [
+              jsx('div', {
+                key: 'bar',
+                title: 'Live win probability',
+                style: { display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--ui-stroke-tertiary)' },
+                children: [
+                  jsx('span', { key: 'a', style: { width: `${probPct(game.probability.away)}%`, background: game.away.color } }),
+                  jsx('span', { key: 'h', style: { width: `${probPct(game.probability.home)}%`, background: game.home.color } })
+                ]
+              }),
+              jsxs('div', {
+                key: 'labels',
+                style: {
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 9.5,
+                  color: 'var(--ui-text-quaternary)',
+                  ...MONO
+                },
+                children: [
+                  jsx('span', { key: 'a', children: `${game.away.abbr} ${probPct(game.probability.away)}%` }),
+                  jsx('span', { key: 'h', children: `${game.home.abbr} ${probPct(game.probability.home)}%` })
+                ]
+              })
+            ]
+          })
+        : null,
       game.situation?.long
         ? jsxs('div', {
             key: 'dd',

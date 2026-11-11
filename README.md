@@ -43,6 +43,12 @@ league is ~3 lines (the paths for WNBA, MLS, EPL and F1 all answer the same way)
 - **Priority order** — the slate sorts itself: red zone > overtime > a one-score 4th quarter >
   other live games > kickoff within 3h > later today > finals, with live blowouts sinking
   below the close games and finals newest-first.
+- **Win probability** — where ESPN publishes one (NFL and NBA live games), the segment carries
+  the favourite's odds (`HOU 84%`), the page card gets a two-tone bar, and the hover card
+  breaks it down by side. Clamped to 1–99% — a decided game never reads "100%".
+- **Hover card** — rest a pointer on any segment for ~300ms: period-by-period scoring, the win
+  probability bar, the last three plays and the venue, without leaving the ticker. The strip
+  holds still while a card is open, and the card only fetches its plays once it opens.
 - **Score flash** — a game lights up for ~2.5s when its score changes, so a score in the
   corner of your eye doesn't get missed.
 - **Stands down when idle** — nothing live and nothing kicking off within 6 hours, and the
@@ -97,6 +103,7 @@ the command palette (`Ctrl/Cmd+K`).
 |--------|-----|
 | Open the scoreboard | Click any game in the ticker or the pane |
 | Move it anywhere | Drag the **Scores** pane in the layout editor |
+| See a game in detail | Rest the pointer on a segment (hover card) |
 | Make it bigger | Gear → **Size** S / M / L |
 | Follow more teams | Gear → **Follow → Add a team…** (chips with × to remove) |
 | Ticker settings | Gear — right end of the status-bar ticker, or far left of the pane strip |
@@ -144,6 +151,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.4.0** — win probability (segment chip, page bar, hover breakdown) and hover cards with
+  linescores, recent plays and venue.
 - **1.3.2** — the "Show: One league / All" pair became a single **One sport at a time**
   switch (it was reading as a second selection control); it greys out when only one sport is
   picked. Off = every sport you picked, in one strip.

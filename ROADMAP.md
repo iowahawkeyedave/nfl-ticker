@@ -7,10 +7,12 @@ Renderer-only is a standing constraint: **no Python half, no `config.yaml` chang
 that needs a backend (e.g. a Yahoo-fantasy score in the ticker) is explicitly out of scope
 unless that decision is reopened.
 
-## Shipped in 1.3
+## Shipped
 
-Priority sort, score-change flash, quiet stand-down and multiple followed teams shipped in
-**v1.3.0** — they're no longer on this list.
+- **1.3.0** — priority sort, score-change flash, quiet stand-down, multiple followed teams.
+- **1.4.0** — win probability and hover cards.
+
+Neither is on the list below any more.
 
 ## v1.4 candidates
 
@@ -22,10 +24,6 @@ Priority sort, score-change flash, quiet stand-down and multiple followed teams 
 
 ### Live intelligence
 
-- **Win probability** — ESPN ships `competitions[0].situation.lastPlay.probability`
-  (`homeWinPercentage` / `awayWinPercentage` / `tiePercentage`) for NFL and NBA. Ticker
-  segment gets an optional "68%" chip; the page card gets a thin bar. Missing on some
-  plays — treat as optional, never a placeholder.
 - **Odds / spread** — `competitions[0].odds` carries `spread`, `overUnder`,
   `homeTeamOdds/awayTeamOdds`. Show "CHI -3.5 · 44" pregame and "covering" live. Offseason
   and some games have no odds; hide the chip rather than guessing.
@@ -36,8 +34,6 @@ Priority sort, score-change flash, quiet stand-down and multiple followed teams 
 
 ### Bigger lifts
 
-- **Hover card** — hovering a segment opens a popover with per-period linescores, leaders
-  and the last 3 plays, fetching `summary?event=` on hover (60s cache) instead of on click.
 - **More leagues** — WNBA (`basketball/wnba`), NCAAM (`basketball/mens-college-basketball`),
   MLS (`soccer/usa.1`), EPL (`soccer/eng.1`), F1 (`racing/f1`). Soccer needs a new status
   branch (minute + stoppage, `FT`, penalties) and a draw-aware winner (no `winner` flag);
