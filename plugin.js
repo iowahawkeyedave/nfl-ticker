@@ -48,7 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 export const ID = 'nfl-ticker'
-export const VERSION = '1.4.0'
+export const VERSION = '1.4.1'
 
 // ---------------------------------------------------------------------------
 // Leagues + settings
@@ -582,7 +582,10 @@ const nowLabel = stamp => new Date(stamp).toLocaleTimeString([], { hour: 'numeri
 // Updates — the repo is the source of truth
 // ---------------------------------------------------------------------------
 
-const REPO = 'iowahawkeyedave/nfl-ticker'
+// The repo is `hermes-scores`; the plugin ID stays `nfl-ticker` because it is
+// the storage namespace and the install folder — renaming it would orphan saved
+// settings and leave the old folder loaded beside the new one.
+const REPO = 'iowahawkeyedave/hermes-scores'
 const REPO_URL = `https://github.com/${REPO}`
 const REPO_RAW = `https://raw.githubusercontent.com/${REPO}/main/plugin.js`
 const REPO_API = `https://api.github.com/repos/${REPO}/contents/plugin.js?ref=main`

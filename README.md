@@ -7,7 +7,12 @@ play — scrolling past while you work, with a full scoreboard page one click aw
 Started as a port of the idea behind [krypdoh/NFL-TCKR](https://github.com/krypdoh/NFL-TCKR)
 (a Windows desktop-AppBar ticker) into a Hermes desktop plugin, so nothing has to reserve
 screen space on your desktop — it rides the app's own status bar. As of **v1.1 it speaks
-five leagues**, and the repo name stays `nfl-ticker` because that's the plugin id.
+five leagues**, so the repo is `hermes-scores`.
+
+**Note:** the plugin *id* is still `nfl-ticker`, so the installed folder is
+`desktop-plugins/nfl-ticker/` and your saved settings live under that name. It's the storage
+namespace — renaming it would reset your settings and leave the old folder loaded beside the
+new one. The repo name and the plugin id are deliberately separate.
 
 ```
 SCORES  NFL HOU 44 – LAC 22 | 2:20 4TH | K.Fairbairn 41 yard field goal is GOOD…  NBA LAL 61 – DET 48 | HALF  NHL TB 0 – WPG 1 | 10:19 P2
@@ -78,7 +83,7 @@ Desktop plugins are plain JavaScript files the app loads at runtime from
 In the Hermes desktop app: **Settings → Plugins → Install from GitHub**, and paste:
 
 ```
-iowahawkeyedave/nfl-ticker
+iowahawkeyedave/hermes-scores
 ```
 
 The app clones at a pinned commit, copies `plugin.js` into
@@ -151,6 +156,8 @@ What's next — alerts, win probability, odds, hover cards, more leagues — liv
 
 ## Version history
 
+- **1.4.1** — repo renamed `nfl-ticker` → `hermes-scores` (plugin id, folder and settings
+  key unchanged); update checks point at the new name.
 - **1.4.0** — win probability (segment chip, page bar, hover breakdown) and hover cards with
   linescores, recent plays and venue.
 - **1.3.2** — the "Show: One league / All" pair became a single **One sport at a time**
